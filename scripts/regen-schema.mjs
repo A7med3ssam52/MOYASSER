@@ -61,6 +61,100 @@ const SUBJECT_FORBIDDEN_RE =
   /^(CREATE OR REPLACE FUNCTION|CREATE TABLE|ALTER TABLE|COMMENT ON TABLE|COMMENT ON VIEW|CREATE VIEW|CREATE INDEX|DROP INDEX|GRANT|REVOKE|CREATE POLICY|DROP POLICY|ALTER FUNCTION|CREATE OR REPLACE VIEW|DROP VIEW|DROP TYPE|CREATE TYPE)[\s\S]{0,80}?\b(pricing_plans|subscriptions|subscription_codes|code_redemptions|v_active_subscriptions|v_dashboard_metrics|subscription_status|expire_subscriptions|redeem_subscription_code|get_my_subscriptions|get_my_current_subscription|create_manual_subscription|revoke_subscription_code|set_pricing_plan|delete_pricing_plan|create_codes_for_staff|generate_codes_internal)\b/i;
 
 // ---------------------------------------------------------------------------
+// Idempotency normalization (pass-2 safety). The full schema must apply
+// cleanly TWICE (apply-full-twice.mjs proves it): once on a fresh project,
+// once again on the same database (the live-remote shape). Older migrations
+// predate the DROP+CREATE convention, so regen prepends the missing guards:
+//   * bare CREATE POLICY  -> prepend DROP POLICY IF EXISTS (policies hold
+//     no grants, so drop+recreate is semantically a no-op)
+//   * bare CREATE TRIGGER -> prepend DROP TRIGGER IF EXISTS
+//   * 0028's list_unit_pricing()/get_public_unit_prices(): later migrations
+//     (0051/0053) changed their return types via DROP+CREATE with identical
+//     grants, so the 0028 definitions get a DROP-prepend (final grants still
+//     come from 0051/0053)
+//   * 0029's get_exam_questions(uuid): its 8-column body went stale when
+//     0045 added the image columns, so re-running it fails validation
+//     ("too few columns"). The CREATE+COMMENT+REVOKE+GRANT quartet is
+//     dropped from the 0029 section only — 0045 restores all four and 0061
+//     finalizes the body. Proven safe: nothing references the function in
+//     0030..0044 (no callers, no policies, no grants).
+// ---------------------------------------------------------------------------
+const POLICY_CREATE_RE = /^\s*CREATE\s+POLICY\s+("?[A-Za-z_][\w$]*"?)\s+ON\s+([A-Za-z_][\w$.]*)/i;
+const POLICY_DROP_RE = /^\s*DROP\s+POLICY\s+IF\s+EXISTS\s+("?[A-Za-z_][\w$]*"?)\s+ON\s+([A-Za-z_][\w$.]*)/i;
+const TRIGGER_CREATE_RE = /^\s*CREATE\s+TRIGGER\s+("?[A-Za-z_][\w$]*"?)\b/i;
+const TRIGGER_ON_RE = /\sON\s+([A-Za-z_][\w$.]*)\s+FOR\s+EACH\s+ROW/i;
+const TRIGGER_DROP_RE = /^\s*DROP\s+TRIGGER\s+IF\s+EXISTS\s+("?[A-Za-z_][\w$]*"?)\s+ON\s+([A-Za-z_][\w$.]*)/i;
+const EARLY_FN_RE =
+  /^\s*CREATE\s+OR\s+REPLACE\s+FUNCTION\s+public\.(list_unit_pricing|get_public_unit_prices)\s*\(/i;
+const STALE_EXAM_FN_RE =
+  /^\s*(CREATE\s+OR\s+REPLACE\s+FUNCTION|COMMENT\s+ON\s+FUNCTION|REVOKE\s+EXECUTE\s+ON\s+FUNCTION|GRANT\s+EXECUTE\s+ON\s+FUNCTION)\s+public\.get_exam_questions\s*\(\s*(?:[A-Za-z_][\w$]*\s+)?uuid\s*\)/i;
+
+function normName(s) {
+  return s.replace(/"/g, '').toLowerCase();
+}
+
+function idempotentize(content, file) {
+  let guards = 0;
+  let droppedFn = 0;
+  let out = '';
+  let prevCode = '';
+  for (const chunk of splitStatements(content)) {
+    const code = stripComments(chunk).trim();
+    if (!code) {
+      out += chunk;
+      prevCode = '';
+      continue;
+    }
+    // 0029-only: drop the superseded get_exam_questions quartet (see above)
+    if (file === '0029_exams.sql' && STALE_EXAM_FN_RE.test(code)) {
+      droppedFn++;
+      console.log(`  drop(superseded-fn): ${file} | ${firstMeaningfulLine(chunk)}`);
+      prevCode = '';
+      continue;
+    }
+    // 0028-only: DROP-prepend before the two return-type-changed functions
+    const earlyFn = file === '0028_units_purchase.sql' ? code.match(EARLY_FN_RE) : null;
+    if (earlyFn) {
+      out += `DROP FUNCTION IF EXISTS public.${normName(earlyFn[1])}();\n`;
+      guards++;
+      console.log(`  guard(fn-drop): ${file} | DROP FUNCTION IF EXISTS public.${normName(earlyFn[1])}()`);
+    }
+    // bare CREATE POLICY -> DROP-prepend unless already guarded
+    const pol = code.match(POLICY_CREATE_RE);
+    if (pol) {
+      const want = `DROP POLICY IF EXISTS ${pol[1]} ON ${pol[2]}`;
+      const prevDrop = prevCode.match(POLICY_DROP_RE);
+      if (!(prevDrop && normName(prevDrop[1]) === normName(pol[1]) && normName(prevDrop[2]) === normName(pol[2]))) {
+        out += `${want};\n`;
+        guards++;
+        console.log(`  guard(policy-drop): ${file} | ${want}`);
+      }
+      out += chunk;
+      prevCode = code;
+      continue;
+    }
+    // bare CREATE TRIGGER -> DROP-prepend unless already guarded
+    const trg = code.match(TRIGGER_CREATE_RE);
+    const trgOn = code.match(TRIGGER_ON_RE);
+    if (trg && trgOn) {
+      const want = `DROP TRIGGER IF EXISTS ${trg[1]} ON ${trgOn[1]}`;
+      const prevDrop = prevCode.match(TRIGGER_DROP_RE);
+      if (!(prevDrop && normName(prevDrop[1]) === normName(trg[1]) && normName(prevDrop[2]) === normName(trgOn[1]))) {
+        out += `${want};\n`;
+        guards++;
+        console.log(`  guard(trigger-drop): ${file} | ${want}`);
+      }
+      out += chunk;
+      prevCode = code;
+      continue;
+    }
+    out += chunk;
+    prevCode = code;
+  }
+  return { text: out, guards, droppedFn };
+}
+
+// ---------------------------------------------------------------------------
 // $$-aware statement splitter. Each chunk keeps its trailing `;` plus any
 // following blank lines, so dropping a chunk removes exactly that statement
 // and re-joining the kept chunks reproduces the file byte-for-byte.
@@ -228,18 +322,29 @@ const header =
   '-- dropped too unless they self-guard table access with to_regclass (the\n' +
   '-- guarded trigger loops). 0028_units_purchase.sql performs the actual\n' +
   '-- DROP of the subscription objects.\n' +
+  '-- Idempotency guards are prepended at regen time so the file also\n' +
+  '-- applies cleanly a SECOND time on the same database (DROP POLICY /\n' +
+  '-- DROP TRIGGER IF EXISTS before bare CREATEs; DROP FUNCTION before the\n' +
+  '-- two 0028 definitions whose return type changed in 0051/0053; the\n' +
+  '-- superseded 0029 get_exam_questions definition is dropped because\n' +
+  '-- 0045 restores it with the image columns and 0061 finalizes it).\n' +
   '-- Verified by the embedded-PostgreSQL harness (tests/local).\n' +
   '-- =====================================================================\n' +
   '\n';
 
 let totalDropped = 0;
 let totalMixed = 0;
+let totalGuards = 0;
+let totalFnDropped = 0;
 const sections = migrations.map((file) => {
   const raw = fs.readFileSync(path.join(MIGRATIONS, file), 'utf8').replace(/\r\n/g, '\n');
   const filtered = filterMigration(raw, file);
   totalDropped += filtered.dropped;
   totalMixed += filtered.mixed;
-  const content = filtered.text.replace(/\n+$/, '') + '\n';
+  const idem = idempotentize(filtered.text, file);
+  totalGuards += idem.guards;
+  totalFnDropped += idem.droppedFn;
+  const content = idem.text.replace(/\n+$/, '') + '\n';
   return (
     '-- =====================================================================\n' +
     `-- >>> included from migrations\\${file}\n` +
@@ -269,4 +374,7 @@ console.log(
 );
 console.log(
   `schema-filter: dropped ${totalDropped} forbidden statement(s), kept ${totalMixed} mixed statement(s) with notes above`,
+);
+console.log(
+  `idempotency: prepended ${totalGuards} guard(s), dropped ${totalFnDropped} superseded function statement(s)`,
 );

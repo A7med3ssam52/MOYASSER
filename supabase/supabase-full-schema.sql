@@ -9,6 +9,12 @@
 -- dropped too unless they self-guard table access with to_regclass (the
 -- guarded trigger loops). 0028_units_purchase.sql performs the actual
 -- DROP of the subscription objects.
+-- Idempotency guards are prepended at regen time so the file also
+-- applies cleanly a SECOND time on the same database (DROP POLICY /
+-- DROP TRIGGER IF EXISTS before bare CREATEs; DROP FUNCTION before the
+-- two 0028 definitions whose return type changed in 0051/0053; the
+-- superseded 0029 get_exam_questions definition is dropped because
+-- 0045 restores it with the image columns and 0061 finalizes it).
 -- Verified by the embedded-PostgreSQL harness (tests/local).
 -- =====================================================================
 
@@ -5137,6 +5143,7 @@ BEGIN
                            'platform_fee', p_platform_fee));
 END $$;
 
+DROP FUNCTION IF EXISTS public.list_unit_pricing();
 -- Staff: full pricing list with unit + grade names.
 CREATE OR REPLACE FUNCTION public.list_unit_pricing()
 RETURNS TABLE (
@@ -5162,6 +5169,7 @@ BEGIN
         ORDER BY g.sort_order, u.sort_order;
 END $$;
 
+DROP FUNCTION IF EXISTS public.get_public_unit_prices();
 -- Public (anon + authenticated): active prices of published units on live
 -- grades (decision M) - the landing-page price surface.
 CREATE OR REPLACE FUNCTION public.get_public_unit_prices()
@@ -5825,29 +5833,6 @@ $$;
 
 COMMENT ON FUNCTION public.list_exams(uuid) IS 'Exams of a lesson visible to the caller (staff: all live; students: only lessons they can access).';
 
-CREATE OR REPLACE FUNCTION public.get_exam_questions(p_exam_id uuid)
-RETURNS SETOF public.exam_questions
-LANGUAGE sql
-STABLE
-SECURITY DEFINER
-SET search_path = public
-AS $$
-    SELECT q.id, q.exam_id, q.type, q.prompt, q.choices,
-           CASE WHEN (public.is_admin() OR public.is_mr_moyasser() OR public.is_teacher())
-                THEN q.correct_index ELSE NULL END AS correct_index,
-           q.max_score, q.sort_order
-    FROM public.exam_questions q
-    JOIN public.exams e ON e.id = q.exam_id AND e.deleted_at IS NULL
-    WHERE q.exam_id = p_exam_id
-      AND (
-          public.is_admin() OR public.is_mr_moyasser() OR public.is_teacher()
-          OR public.can_access_lesson(e.lesson_id)
-      )
-    ORDER BY q.sort_order;
-$$;
-
-COMMENT ON FUNCTION public.get_exam_questions(uuid) IS 'Questions of an exam; correct_index is masked for non-staff callers (answer key never leaks).';
-
 CREATE OR REPLACE FUNCTION public.get_my_exam_attempt(p_exam_id uuid)
 RETURNS SETOF public.exam_attempts
 LANGUAGE sql
@@ -6084,9 +6069,6 @@ COMMENT ON FUNCTION public.grade_exam_attempt(uuid, jsonb) IS 'Staff essay gradi
 -- ---------------------------------------------------------------------
 REVOKE EXECUTE ON FUNCTION public.list_exams(uuid) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.list_exams(uuid) TO authenticated;
-
-REVOKE EXECUTE ON FUNCTION public.get_exam_questions(uuid) FROM PUBLIC;
-GRANT  EXECUTE ON FUNCTION public.get_exam_questions(uuid) TO authenticated;
 
 REVOKE EXECUTE ON FUNCTION public.get_my_exam_attempt(uuid) FROM PUBLIC;
 GRANT  EXECUTE ON FUNCTION public.get_my_exam_attempt(uuid) TO authenticated;
@@ -9083,6 +9065,7 @@ COMMENT ON TABLE public.announcements IS 'Global announcements. Shown globally v
 ALTER TABLE public.announcements ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.announcements FORCE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS announcements_select_active ON public.announcements;
 -- ---------------------------------------------------------------------
 -- RLS Policies
 -- ---------------------------------------------------------------------
@@ -9094,24 +9077,30 @@ CREATE POLICY announcements_select_active ON public.announcements
         AND (ends_at IS NULL OR ends_at > now())
     );
 
+DROP POLICY IF EXISTS announcements_admin_all ON public.announcements;
 -- Admin full access
 CREATE POLICY announcements_admin_all ON public.announcements
     FOR ALL USING (public.is_admin()) WITH CHECK (public.is_admin());
 
+DROP POLICY IF EXISTS announcements_teacher_select ON public.announcements;
 -- Teacher/mr_moyasser: read all, write own (for management UI)
 CREATE POLICY announcements_teacher_select ON public.announcements
     FOR SELECT USING (public.get_current_role() IN ('teacher','mr_moyasser'));
 
+DROP POLICY IF EXISTS announcements_teacher_write ON public.announcements;
 CREATE POLICY announcements_teacher_write ON public.announcements
     FOR INSERT WITH CHECK (public.get_current_role() IN ('teacher','mr_moyasser','admin'));
 
+DROP POLICY IF EXISTS announcements_teacher_update ON public.announcements;
 CREATE POLICY announcements_teacher_update ON public.announcements
     FOR UPDATE USING (public.get_current_role() IN ('teacher','mr_moyasser','admin'))
     WITH CHECK (public.get_current_role() IN ('teacher','mr_moyasser','admin'));
 
+DROP POLICY IF EXISTS announcements_teacher_delete ON public.announcements;
 CREATE POLICY announcements_teacher_delete ON public.announcements
     FOR DELETE USING (public.get_current_role() IN ('teacher','mr_moyasser','admin'));
 
+DROP TRIGGER IF EXISTS set_announcements_updated_at ON public.announcements;
 -- ---------------------------------------------------------------------
 -- Updated_at trigger (uses existing set_updated_at from 0004)
 -- ---------------------------------------------------------------------
