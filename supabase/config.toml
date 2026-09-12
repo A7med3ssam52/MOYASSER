@@ -1,0 +1,56 @@
+project_id = "uhpssthxwthlspxuaovb"
+
+[functions]
+
+[functions.upload-pdf]
+verify_jwt = true
+
+[functions.delete-pdf]
+verify_jwt = true
+
+[functions.bunny-video-webhook]
+verify_jwt = false
+
+[functions.create-video-upload-session]
+verify_jwt = true
+
+[functions.export-audit-log]
+verify_jwt = true
+
+[functions.generate-unit-codes]
+verify_jwt = true
+
+[functions.get-pdf-signed-url]
+verify_jwt = true
+
+[functions.get-video-playback-url]
+verify_jwt = true
+
+[functions.get-video-thumbnail-url]
+verify_jwt = true
+
+[functions.recheck-video-states]
+verify_jwt = false
+
+[functions.upload-board]
+verify_jwt = true
+
+[functions.delete-board]
+verify_jwt = true
+
+[functions.get-board-signed-urls]
+verify_jwt = true
+
+[functions.upload-exam-image]
+verify_jwt = true
+
+[functions.get-exam-image-signed-urls]
+verify_jwt = true
+
+[storage.buckets.boards]
+public = false
+file_size_limit = "10MiB"
+
+[storage.buckets.exam-images]
+public = false
+file_size_limit = "5MiB"

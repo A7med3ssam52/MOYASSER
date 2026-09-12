@@ -1,0 +1,285 @@
+import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { beforeEach, describe, expect, it } from 'vitest';
+
+import {
+  makeProfile,
+  mockState,
+  resetMockState,
+  setAuthenticatedStudent,
+  setAuthenticatedTeacher,
+  setAuthenticatedMoyasser,
+} from './supabase-mock';
+import { renderApp } from './utils';
+
+describe('route guards', () => {
+  beforeEach(() => {
+    resetMockState();
+  });
+
+  it('redirects unauthenticated users to the login page', async () => {
+    renderApp('/student/dashboard');
+
+    expect(await screen.findByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+  });
+
+  it('redirects a student away from staff routes', async () => {
+    setAuthenticatedStudent();
+    renderApp('/moyasser/students');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+  });
+
+  it('restores the session on reload and skips the guest pages', async () => {
+    setAuthenticatedStudent();
+    renderApp('/login');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+  });
+
+  it('redirects mr_moyasser away from student routes', async () => {
+    setAuthenticatedMoyasser();
+    renderApp('/student/dashboard');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
+    });
+  });
+
+  it('allows a teacher to access staff routes', async () => {
+    setAuthenticatedTeacher();
+    renderApp('/moyasser/students');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
+    });
+  });
+
+  it('allows an admin to access staff routes', async () => {
+    setAuthenticatedMoyasser({ role: 'admin', id: 'user-admin-1', email: 'admin@example.com' });
+    renderApp('/moyasser/students');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
+    });
+  });
+
+  it('shows a neutral loading state while the profile is being fetched, then renders', async () => {
+    setAuthenticatedStudent();
+    renderApp('/student/dashboard');
+
+    expect(screen.getByText('جاري التحقق من الحساب')).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+    expect(screen.queryByText('تعذر تحميل بيانات الحساب')).not.toBeInTheDocument();
+  });
+
+  it('shows an error card with retry when the profile fetch fails, and recovers', async () => {
+    setAuthenticatedStudent();
+    mockState.singleQueryErrors.profiles = 'connection failed';
+    const user = userEvent.setup();
+    renderApp('/student/dashboard');
+
+    expect(
+      await screen.findByText('تعذر تحميل بيانات الحساب', undefined, { timeout: 4000 }),
+    ).toBeInTheDocument();
+
+    mockState.singleQueryErrors.profiles = '';
+    await user.click(screen.getByRole('button', { name: 'إعادة المحاولة' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+  });
+
+  it('offers a sign-out escape hatch from the profile error card', async () => {
+    setAuthenticatedStudent();
+    mockState.singleQueryErrors.profiles = 'connection failed';
+    const user = userEvent.setup();
+    renderApp('/student/dashboard');
+
+    await screen.findByText('تعذر تحميل بيانات الحساب', undefined, { timeout: 4000 });
+    await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+    });
+  });
+
+  it('shows the profile error card instead of an infinite spinner when the profile row is missing', async () => {
+    setAuthenticatedTeacher();
+    mockState.profiles = [];
+    const user = userEvent.setup();
+    renderApp('/moyasser/students');
+
+    expect(await screen.findByText('تعذر تحميل بيانات الحساب')).toBeInTheDocument();
+    expect(screen.queryByText('جاري التحقق من الحساب')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+    });
+  });
+
+  it('recovers from a missing profile via retry once the profile row appears', async () => {
+    setAuthenticatedTeacher();
+    mockState.profiles = [];
+    const user = userEvent.setup();
+    renderApp('/moyasser/students');
+
+    await screen.findByText('تعذر تحميل بيانات الحساب');
+
+    mockState.profiles.push(
+      makeProfile({
+        id: 'user-teacher-1',
+        email: 'teacher@example.com',
+        full_name: 'الأستاذ أحمد',
+        role: 'teacher',
+      }),
+    );
+    await user.click(screen.getByRole('button', { name: 'إعادة المحاولة' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
+    });
+  });
+
+  it('shows the bootstrap error card when session restore hangs, then recovers on retry', async () => {
+    setAuthenticatedStudent();
+    const authContext = (await import('../features/auth/AuthContext')) as unknown as {
+      AUTH_BOOTSTRAP_TIMEOUT_MS: { value: number };
+    };
+    authContext.AUTH_BOOTSTRAP_TIMEOUT_MS.value = 20;
+    mockState.authGates.getSession = new Promise(() => {});
+    const user = userEvent.setup();
+    renderApp('/student/dashboard');
+
+    expect(await screen.findByText('تعذر الاتصال بالخادم')).toBeInTheDocument();
+    expect(screen.queryByText('جاري التحقق من الحساب')).not.toBeInTheDocument();
+
+    mockState.authGates.getSession = undefined;
+    await user.click(screen.getByRole('button', { name: 'إعادة المحاولة' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+  });
+
+  it('signs out from the header and lands on the login page', async () => {
+    setAuthenticatedStudent();
+    const user = userEvent.setup();
+    renderApp('/student/dashboard');
+
+    await screen.findByRole('heading', { name: 'لوحة الطالب' });
+    await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+    });
+  });
+
+  it('allows a student to open the units page', async () => {
+    setAuthenticatedStudent();
+    renderApp('/student/units');
+
+    await waitFor(() => {
+      // PageHeader renders its own h1 in addition to the LayoutShell h1
+      const headings = screen.getAllByRole('heading', { name: 'وحداتي' });
+      expect(headings.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('redirects mr_moyasser away from the student units page', async () => {
+    setAuthenticatedMoyasser();
+    renderApp('/student/units');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
+    });
+  });
+
+  it('allows mr_moyasser to open the codes page', async () => {
+    setAuthenticatedMoyasser();
+    renderApp('/moyasser/codes');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'أكواد الوحدات' })).toBeInTheDocument();
+    });
+  });
+
+  it('allows an admin to open the pricing page', async () => {
+    setAuthenticatedMoyasser({ role: 'admin', id: 'user-admin-1', email: 'admin@example.com' });
+    renderApp('/moyasser/pricing');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'أسعار الوحدات' })).toBeInTheDocument();
+    });
+  });
+
+  it('redirects a student away from the codes page', async () => {
+    setAuthenticatedStudent();
+    renderApp('/moyasser/codes');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+  });
+
+  it('still clears the session and navigates to login when the remote sign-out fails', async () => {
+    setAuthenticatedStudent();
+    mockState.signOutError = 'network error';
+    const user = userEvent.setup();
+    renderApp('/student/dashboard');
+
+    await screen.findByRole('heading', { name: 'لوحة الطالب' });
+    await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+    });
+    expect(await screen.findByText('تعذر تسجيل الخروج. حاول مرة أخرى لاحقًا')).toBeInTheDocument();
+  });
+
+  it('allows an admin to open the audit log page', async () => {
+    setAuthenticatedMoyasser({ role: 'admin', id: 'user-admin-1', email: 'admin@example.com' });
+    renderApp('/admin/audit');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'سجل النشاطات' })).toBeInTheDocument();
+    });
+  });
+
+  it('allows an admin to open the roles page', async () => {
+    setAuthenticatedMoyasser({ role: 'admin', id: 'user-admin-1', email: 'admin@example.com' });
+    renderApp('/admin/roles');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'الأدوار والصلاحيات' })).toBeInTheDocument();
+    });
+  });
+
+  it('redirects mr_moyasser away from admin routes', async () => {
+    setAuthenticatedMoyasser();
+    renderApp('/admin/audit');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
+    });
+  });
+
+  it('redirects a student away from admin routes', async () => {
+    setAuthenticatedStudent();
+    renderApp('/admin/roles');
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
+    });
+  });
+});

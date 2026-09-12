@@ -1,0 +1,193 @@
+import { getSupabaseClient } from './supabase';
+
+export type AnnouncementVariant = 'info' | 'warning' | 'success' | 'error';
+export type UserRole = 'student' | 'teacher' | 'mr_moyasser' | 'admin' | 'assistant';
+
+export interface Announcement {
+  id: string;
+  title: string;
+  body: string;
+  link_url: string | null;
+  link_label: string | null;
+  variant: AnnouncementVariant;
+  target_roles: UserRole[];
+  hide_on_paths: string[];
+  starts_at: string;
+  ends_at: string | null;
+  is_active: boolean;
+  dismissible: boolean;
+  /** التوقيع العربي أسفل الإعلان — افتراضي 'الإدارة'، ومقفول لمستر محمد ياسر */
+  signature_name: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateAnnouncementInput {
+  title: string;
+  body: string;
+  link_url?: string | null;
+  link_label?: string | null;
+  variant?: AnnouncementVariant;
+  target_roles?: UserRole[];
+  hide_on_paths?: string[];
+  starts_at?: string;
+  ends_at?: string | null;
+  is_active?: boolean;
+  dismissible?: boolean;
+  signature_name?: string;
+}
+
+export interface UpdateAnnouncementInput {
+  title?: string;
+  body?: string;
+  link_url?: string | null;
+  link_label?: string | null;
+  variant?: AnnouncementVariant;
+  target_roles?: UserRole[];
+  hide_on_paths?: string[];
+  starts_at?: string | null;
+  ends_at?: string | null;
+  is_active?: boolean;
+  dismissible?: boolean;
+  signature_name?: string | null;
+}
+
+/** التوقيع الافتراضي القابل للتعديل في فورم الأدمن */
+export const ADMIN_DEFAULT_SIGNATURE = 'الإدارة';
+/** التوقيع المقفول لحساب مستر محمد ياسر */
+export const MOYASSER_LOCKED_SIGNATURE = 'م / محمد ياسر';
+export const SIGNATURE_MAX_LENGTH = 60;
+
+/** مستر محمد ياسر توقيعه مقفول دائماً — باقي الأدوار قابلة للتعديل */
+export function isSignatureLockedForRole(role: UserRole | string | null | undefined): boolean {
+  return role === 'mr_moyasser';
+}
+
+/** يحسم التوقيع النهائي حسب الدور: مقفول لمحمد ياسر، والباقي القيمة المدخلة أو الافتراضي */
+export function resolveAnnouncementSignature(
+  role: UserRole | string | null | undefined,
+  input?: string | null,
+): string {
+  if (isSignatureLockedForRole(role)) return MOYASSER_LOCKED_SIGNATURE;
+  const trimmed = (input ?? '').trim();
+  return trimmed || ADMIN_DEFAULT_SIGNATURE;
+}
+
+const VARIANT_LABELS: Record<AnnouncementVariant, string> = {
+  info: 'معلومات',
+  warning: 'تحذير',
+  success: 'نجاح',
+  error: 'خطأ',
+};
+
+const ROLE_LABELS: Record<UserRole, string> = {
+  student: 'طالب',
+  teacher: 'مدرس',
+  mr_moyasser: 'الأستاذ محمد ياسر',
+  admin: 'مشرف',
+  assistant: 'مساعد',
+};
+
+export function getVariantLabel(variant: AnnouncementVariant): string {
+  return VARIANT_LABELS[variant] ?? variant;
+}
+
+export function getRoleLabel(role: UserRole): string {
+  return ROLE_LABELS[role] ?? role;
+}
+
+export async function fetchActiveAnnouncement(currentPath: string): Promise<Announcement | null> {
+  try {
+    const supabase = getSupabaseClient();
+    const { data, error } = await (supabase as any).rpc('get_active_announcements', {
+      p_current_path: currentPath,
+    });
+    if (error) {
+      const code = String((error as { code?: unknown })?.code ?? '').toLowerCase();
+      const msg = String((error as { message?: unknown })?.message ?? '').toLowerCase();
+      // قبل 0049: الدالة غير موجودة — صمت (PGRST202 / could not find the function)
+      if (code === 'pgrst202' || msg.includes('could not find the function')) {
+        return null;
+      }
+      // 42883 operator does not exist (مثل user_role = text) يجب تسجيله وليس ابتلاعه
+      // eslint-disable-next-line no-console
+      console.warn('[announcement] fetch failed', error);
+      return null;
+    }
+    if (!data?.length) return null;
+    return data[0] as Announcement;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[announcement] fetch failed', err);
+    return null;
+  }
+}
+
+export async function listAnnouncements(limit = 50, offset = 0): Promise<Announcement[]> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await (supabase as any).rpc('list_announcements', {
+    p_limit: limit,
+    p_offset: offset,
+  });
+  if (error) throw error;
+  return (data ?? []) as Announcement[];
+}
+
+export async function getAnnouncementById(id: string): Promise<Announcement> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await (supabase as any).rpc('get_announcement_by_id', {
+    p_id: id,
+  });
+  if (error) throw error;
+  return data as Announcement;
+}
+
+export async function createAnnouncement(input: CreateAnnouncementInput): Promise<Announcement> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await (supabase as any).rpc('create_announcement', {
+    p_title: input.title,
+    p_body: input.body,
+    p_link_url: input.link_url ?? null,
+    p_link_label: input.link_label ?? null,
+    p_variant: input.variant ?? 'info',
+    p_target_roles: input.target_roles ?? ['student', 'teacher', 'mr_moyasser', 'admin', 'assistant'],
+    p_hide_on_paths: input.hide_on_paths ?? [],
+    p_starts_at: input.starts_at ?? new Date().toISOString(),
+    p_ends_at: input.ends_at ?? null,
+    p_is_active: input.is_active ?? true,
+    p_dismissible: input.dismissible ?? true,
+    p_signature_name: input.signature_name?.trim() || ADMIN_DEFAULT_SIGNATURE,
+  });
+  if (error) throw error;
+  return data as Announcement;
+}
+
+export async function updateAnnouncement(id: string, input: UpdateAnnouncementInput): Promise<Announcement> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await (supabase as any).rpc('update_announcement', {
+    p_id: id,
+    p_title: input.title ?? null,
+    p_body: input.body ?? null,
+    p_link_url: input.link_url ?? null,
+    p_link_label: input.link_label ?? null,
+    p_variant: input.variant ?? null,
+    p_target_roles: input.target_roles ?? null,
+    p_hide_on_paths: input.hide_on_paths ?? null,
+    p_starts_at: input.starts_at ?? null,
+    p_ends_at: input.ends_at ?? null,
+    p_is_active: input.is_active ?? null,
+    p_dismissible: input.dismissible ?? null,
+    p_signature_name: input.signature_name ?? null,
+  });
+  if (error) throw error;
+  return data as Announcement;
+}
+
+export async function deleteAnnouncement(id: string): Promise<void> {
+  const supabase = getSupabaseClient();
+  const { error } = await (supabase as any).rpc('delete_announcement', {
+    p_id: id,
+  });
+  if (error) throw error;
+}

@@ -1,0 +1,179 @@
+import { lazy, Suspense } from 'react';
+import { Navigate, Route, Routes } from 'react-router-dom';
+
+import { GuestOnly, ProtectedRoute, RoleGuard } from '../components/guards';
+import { Spinner } from '../components/Spinner';
+import { SuspendedAccountGate } from '../components/SuspendedAccountGate';
+import { ErrorBoundary } from './ErrorBoundary';
+
+// Public — lazy for code splitting (Landing excludes hls.js chunk)
+const LandingPage = lazy(() => import('../features/public/LandingPage').then((m) => ({ default: m.LandingPage })));
+const AboutPage = lazy(() => import('../features/public/AboutPage').then((m) => ({ default: m.AboutPage })));
+const HowItWorksPage = lazy(() => import('../features/public/HowItWorksPage').then((m) => ({ default: m.HowItWorksPage })));
+const SubjectsPage = lazy(() => import('../features/public/SubjectsPage').then((m) => ({ default: m.SubjectsPage })));
+const GradeLandingPage = lazy(() => import('../features/public/GradeLandingPage').then((m) => ({ default: m.GradeLandingPage })));
+const PricingPublicPage = lazy(() => import('../features/public/PricingPublicPage').then((m) => ({ default: m.PricingPublicPage })));
+const FaqPage = lazy(() => import('../features/public/FaqPage').then((m) => ({ default: m.FaqPage })));
+const ContactPage = lazy(() => import('../features/public/ContactPage').then((m) => ({ default: m.ContactPage })));
+const PrivacyPage = lazy(() => import('../features/public/PrivacyPage').then((m) => ({ default: m.PrivacyPage })));
+const TermsPage = lazy(() => import('../features/public/TermsPage').then((m) => ({ default: m.TermsPage })));
+const NotFoundPage = lazy(() => import('../features/public/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
+
+// Auth — keep lazy too but small
+const LoginPage = lazy(() => import('../features/auth/LoginPage').then((m) => ({ default: m.LoginPage })));
+const RegisterPage = lazy(() => import('../features/auth/RegisterPage').then((m) => ({ default: m.RegisterPage })));
+
+// Student
+const StudentDashboardPage = lazy(() => import('../features/student/StudentDashboardPage').then((m) => ({ default: m.StudentDashboardPage })));
+const StudentProfilePage = lazy(() => import('../features/student/StudentProfilePage').then((m) => ({ default: m.StudentProfilePage })));
+const StudentChangePasswordPage = lazy(() => import('../features/student/StudentChangePasswordPage').then((m) => ({ default: m.StudentChangePasswordPage })));
+const UnitsPage = lazy(() => import('../features/student/UnitsPage').then((m) => ({ default: m.UnitsPage })));
+const StudentCurriculumPage = lazy(() => import('../features/student/StudentCurriculumPage').then((m) => ({ default: m.StudentCurriculumPage })));
+const StudentLessonPage = lazy(() => import('../features/student/StudentLessonPage').then((m) => ({ default: m.StudentLessonPage })));
+const StudentNotificationsPage = lazy(() => import('../features/student/StudentNotificationsPage').then((m) => ({ default: m.StudentNotificationsPage })));
+const StudentPresenceGate = lazy(() =>
+  import('../features/student/StudentPresenceGate').then((m) => ({ default: m.StudentPresenceGate })),
+);
+
+// Moyasser / Teacher
+const MoyasserDashboardPage = lazy(() => import('../features/moyasser/MoyasserDashboardPage').then((m) => ({ default: m.MoyasserDashboardPage })));
+const ReportsPage = lazy(() => import('../features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const StudentListPage = lazy(() => import('../features/moyasser/StudentListPage').then((m) => ({ default: m.StudentListPage })));
+const TrashPage = lazy(() => import('../features/moyasser/TrashPage').then((m) => ({ default: m.TrashPage })));
+const StudentDetailPage = lazy(() => import('../features/moyasser/StudentDetailPage').then((m) => ({ default: m.StudentDetailPage })));
+const GradesPage = lazy(() => import('../features/moyasser/GradesPage').then((m) => ({ default: m.GradesPage })));
+const CurriculumPage = lazy(() => import('../features/moyasser/CurriculumPage').then((m) => ({ default: m.CurriculumPage })));
+const CurriculumUnitsPage = lazy(() => import('../features/moyasser/CurriculumUnitsPage').then((m) => ({ default: m.CurriculumUnitsPage })));
+const CurriculumLessonsPage = lazy(() => import('../features/moyasser/CurriculumLessonsPage').then((m) => ({ default: m.CurriculumLessonsPage })));
+const ExamsPage = lazy(() => import('../features/moyasser/ExamsPage').then((m) => ({ default: m.ExamsPage })));
+const LessonAssetsPage = lazy(() => import('../features/moyasser/LessonAssetsPage').then((m) => ({ default: m.LessonAssetsPage })));
+const PricingPage = lazy(() => import('../features/moyasser/PricingPage').then((m) => ({ default: m.PricingPage })));
+const CodesPage = lazy(() => import('../features/moyasser/CodesPage').then((m) => ({ default: m.CodesPage })));
+const MoyasserAnnouncementsListPage = lazy(() => import('../features/moyasser/AnnouncementsListPage').then((m) => ({ default: m.MoyasserAnnouncementsListPage })));
+const MoyasserAnnouncementFormPage = lazy(() => import('../features/moyasser/AnnouncementFormPage').then((m) => ({ default: m.MoyasserAnnouncementFormPage })));
+
+// Admin
+const AuditLogPage = lazy(() => import('../features/admin/AuditLogPage').then((m) => ({ default: m.AuditLogPage })));
+const RolesPage = lazy(() => import('../features/admin/RolesPage').then((m) => ({ default: m.RolesPage })));
+const AnnouncementsListPage = lazy(() => import('../features/admin/AnnouncementsListPage').then((m) => ({ default: m.AnnouncementsListPage })));
+const AnnouncementFormPage = lazy(() => import('../features/admin/AnnouncementFormPage').then((m) => ({ default: m.AnnouncementFormPage })));
+const PresencePage = lazy(() => import('../features/admin/PresencePage').then((m) => ({ default: m.PresencePage })));
+const StudentPresenceHistoryPage = lazy(() =>
+  import('../features/admin/StudentPresenceHistoryPage').then((m) => ({ default: m.StudentPresenceHistoryPage })),
+);
+
+function PageFallback() {
+  return (
+    <div className="flex min-h-[50vh] items-center justify-center p-8">
+      <Spinner label="جاري التحميل" />
+    </div>
+  );
+}
+
+export function AppRoutes() {
+  return (
+    <ErrorBoundary>
+      <Suspense fallback={<PageFallback />}>
+        <Routes>
+        {/* Public SEO surface — accessible without auth, indexable */}
+        <Route
+          path="/"
+          element={
+            <GuestOnly>
+              <LandingPage />
+            </GuestOnly>
+          }
+        />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/how-it-works" element={<HowItWorksPage />} />
+        <Route path="/subjects" element={<SubjectsPage />} />
+        <Route path="/subjects/:gradeSlug" element={<GradeLandingPage />} />
+        <Route path="/pricing" element={<PricingPublicPage />} />
+        <Route path="/faq" element={<FaqPage />} />
+        <Route path="/contact" element={<ContactPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/terms" element={<TermsPage />} />
+
+        {/* Auth — noindex */}
+        <Route
+          path="/login"
+          element={
+            <GuestOnly>
+              <LoginPage />
+            </GuestOnly>
+          }
+        />
+        <Route
+          path="/register"
+          element={
+            <GuestOnly>
+              <RegisterPage />
+            </GuestOnly>
+          }
+        />
+
+        {/* Protected */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/student" element={<RoleGuard allow={['student']} />}>
+            <Route element={<SuspendedAccountGate />}>
+              <Route element={<StudentPresenceGate />}>
+                <Route index element={<Navigate to="/student/dashboard" replace />} />
+                <Route path="dashboard" element={<StudentDashboardPage />} />
+                <Route path="profile" element={<StudentProfilePage />} />
+                <Route path="password" element={<StudentChangePasswordPage />} />
+                <Route path="units" element={<UnitsPage />} />
+                <Route path="curriculum" element={<StudentCurriculumPage />} />
+                <Route path="lessons/:lessonId" element={<StudentLessonPage />} />
+                <Route path="notifications" element={<StudentNotificationsPage />} />
+              </Route>
+            </Route>
+          </Route>
+          {/* Staff full access: mr_moyasser / admin / teacher */}
+          <Route path="/moyasser" element={<RoleGuard allow={['mr_moyasser', 'admin', 'teacher']} />}>
+            <Route index element={<Navigate to="/moyasser/dashboard" replace />} />
+            <Route path="dashboard" element={<MoyasserDashboardPage />} />
+            <Route path="reports" element={<ReportsPage />} />
+            <Route path="students" element={<StudentListPage />} />
+            <Route path="students/trash" element={<TrashPage />} />
+            <Route path="students/:studentId" element={<StudentDetailPage />} />
+            <Route path="grades" element={<GradesPage />} />
+            <Route path="curriculum" element={<CurriculumPage />} />
+            <Route path="curriculum/:gradeId" element={<CurriculumUnitsPage />} />
+            <Route path="curriculum/:gradeId/:unitId" element={<CurriculumLessonsPage />} />
+            <Route path="exams" element={<ExamsPage />} />
+            <Route path="lessons/:lessonId" element={<LessonAssetsPage />} />
+            <Route path="pricing" element={<PricingPage />} />
+            <Route path="codes" element={<CodesPage />} />
+            <Route path="announcements" element={<MoyasserAnnouncementsListPage />} />
+            <Route path="announcements/new" element={<MoyasserAnnouncementFormPage />} />
+            <Route path="announcements/:id/edit" element={<MoyasserAnnouncementFormPage />} />
+          </Route>
+          {/* Assistant limited: curriculum (read-only) + exams only */}
+          <Route path="/moyasser" element={<RoleGuard allow={['assistant']} />}>
+            <Route index element={<Navigate to="/moyasser/exams" replace />} />
+            <Route path="curriculum" element={<CurriculumPage />} />
+            <Route path="curriculum/:gradeId" element={<CurriculumUnitsPage />} />
+            <Route path="curriculum/:gradeId/:unitId" element={<CurriculumLessonsPage />} />
+            <Route path="exams" element={<ExamsPage />} />
+            <Route path="lessons/:lessonId" element={<LessonAssetsPage />} />
+          </Route>
+          <Route path="/admin" element={<RoleGuard allow={['admin']} />}>
+            <Route index element={<Navigate to="/admin/dashboard" replace />} />
+            <Route path="dashboard" element={<MoyasserDashboardPage />} />
+            <Route path="presence" element={<PresencePage />} />
+            <Route path="presence/:studentId" element={<StudentPresenceHistoryPage />} />
+            <Route path="reports" element={<ReportsPage />} />
+            <Route path="audit" element={<AuditLogPage />} />
+            <Route path="roles" element={<RolesPage />} />
+            <Route path="announcements" element={<AnnouncementsListPage />} />
+            <Route path="announcements/new" element={<AnnouncementFormPage />} />
+            <Route path="announcements/:id/edit" element={<AnnouncementFormPage />} />
+          </Route>
+        </Route>
+
+        <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
+    </ErrorBoundary>
+  );
+}

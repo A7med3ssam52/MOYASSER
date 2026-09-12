@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /student/
+Disallow: /moyasser/
+Disallow: /admin/
+Disallow: /login
+Disallow: /register
+Sitemap: https://moyasser.com/sitemap.xml

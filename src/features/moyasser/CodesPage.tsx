@@ -1,0 +1,410 @@
+import { useCallback, useEffect, useState } from 'react';
+import { Check, Copy, KeyRound, Trash2 } from 'lucide-react';
+
+import { Badge } from '../../components/Badge';
+import { Button } from '../../components/Button';
+import { Card } from '../../components/Card';
+import { EmptyState } from '../../components/EmptyState';
+import { ErrorState } from '../../components/ErrorState';
+import { Input } from '../../components/Input';
+import { LayoutShell } from '../../components/LayoutShell';
+import { Modal } from '../../components/Modal';
+import { Select } from '../../components/Select';
+import { Skeleton } from '../../components/Skeleton';
+import { RoleNav } from '../../components/RoleNav';
+import { useToast } from '../../components/Toast';
+import {
+  createUnitCodesForStaff,
+  getRpcErrorCode,
+  listCodesByUnit,
+  listGrades,
+  listUnitPricing,
+  listUnitsForGrade,
+  revokeUnitCode,
+} from '../../data/rpc';
+import { copyText } from '../../lib/clipboard';
+import { formatDateTime, formatPrice } from '../../lib/format';
+import type { UnitCodeWithUnit, UnitPricingWithUnit } from '../../types/database';
+
+const CODE_ERROR_MESSAGES: Record<string, string> = {
+  invalid_count: 'يجب أن يكون العدد بين 1 و 500',
+  unit_not_found: 'الوحدة المختارة غير موجودة',
+  unit_inactive: 'هذه الوحدة غير متاحة حالياً',
+  code_not_found: 'الكود غير موجود',
+  code_not_revocable: 'هذا الكود لا يمكن إلغاؤه',
+  code_already_used: 'الكود المستخدم لا يمكن إلغاؤه',
+  permission_denied: 'ليست لديك صلاحية',
+  access_denied: 'ليست لديك صلاحية',
+  system_actor_required: 'حدث خطأ داخلي في تمحمد ياسر الأكواد',
+  unit_pricing_not_found: 'لا يوجد تسعير لهذه الوحدة',
+  generation_failed: 'فشل تمحمد ياسر الأكواد — حاول مرة أخرى',
+};
+
+function codeErrorMessage(error: unknown): string {
+  const code = getRpcErrorCode(error);
+  if (code && CODE_ERROR_MESSAGES[code]) {
+    return CODE_ERROR_MESSAGES[code];
+  }
+  return 'تعذر تنفيذ العملية. حاول مرة أخرى';
+}
+
+const COPIED_LABEL = 'تم النسخ ✓';
+
+export function CodesPage() {
+  const { showToast } = useToast();
+  const [codes, setCodes] = useState<UnitCodeWithUnit[] | null>(null);
+  const [pricing, setPricing] = useState<UnitPricingWithUnit[]>([]);
+  const [selectedUnitId, setSelectedUnitId] = useState('');
+  const [count, setCount] = useState('');
+  const [note, setNote] = useState('');
+  const [generatedCodes, setGeneratedCodes] = useState<string[]>([]);
+  const [error, setError] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [countError, setCountError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [copiedCodeId, setCopiedCodeId] = useState<string | null>(null);
+  const [revoking, setRevoking] = useState<UnitCodeWithUnit | null>(null);
+  const [revokeBusy, setRevokeBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(false);
+    try {
+      const nextPricing = await listUnitPricing();
+      // Filter pricing to only non-deleted units (DB may still return deleted due to 0051 bug)
+      let filteredPricing = nextPricing;
+      try {
+        const grades = await listGrades();
+        // listGrades only returns active, non-deleted grades — need all grades for staff
+        // Fallback: use pricing's grade_name to keep all, but try to filter deleted units via direct units query
+        const allUnits = (await Promise.all(grades.map((g) => listUnitsForGrade(g.id).catch(() => [] as never)))).flat();
+        const allUnitIds = new Set(allUnits.map((u) => u.id));
+        // Keep pricing only if unit is in allUnits (non-deleted) or if is_free (may be without pricing row)
+        const hasUnits = allUnitIds.size > 0;
+        if (hasUnits) {
+          filteredPricing = nextPricing.filter((p) => allUnitIds.has(p.unit_id));
+          // If filtering removed everything (e.g., all pricing was for deleted units), keep original to avoid empty dropdown
+          if (filteredPricing.length === 0) filteredPricing = nextPricing;
+        }
+      } catch {
+        // keep original pricing on fallback failure
+      }
+      setPricing(filteredPricing);
+      setSelectedUnitId((prev) => prev || (filteredPricing[0]?.unit_id ?? nextPricing[0]?.unit_id ?? ''));
+    } catch {
+      setError(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!selectedUnitId) {
+      setCodes([]);
+      return () => {
+        cancelled = true;
+      };
+    }
+    setCodes(null);
+    listCodesByUnit(selectedUnitId)
+      .then((rows) => {
+        if (!cancelled) {
+          setCodes(rows);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError(true);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedUnitId]);
+
+  const handleGenerate = async () => {
+    setCountError(null);
+    if (!selectedUnitId) {
+      setCountError('لا توجد وحدات متاحة');
+      return;
+    }
+    const countNumber = Math.trunc(Number(count));
+    if (!count.trim() || !Number.isFinite(countNumber) || countNumber < 1 || countNumber > 500) {
+      setCountError('يجب أن يكون العدد بين 1 و 500');
+      return;
+    }
+    setGenerating(true);
+    try {
+      const result = await createUnitCodesForStaff(selectedUnitId, countNumber, note.trim() || null);
+      setGeneratedCodes(result.map((item) => item.code));
+      showToast(`تم تمحمد ياسر ${result.length} كود بنجاح`);
+      const rows = await listCodesByUnit(selectedUnitId);
+      setCodes(rows);
+    } catch (err) {
+      setCountError(codeErrorMessage(err));
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const copyCodes = async () => {
+    if (generatedCodes.length === 0) {
+      return;
+    }
+    const ok = await copyText(generatedCodes.join('\n'));
+    if (ok) {
+      setCopied(true);
+      showToast('تم نسخ الأكواد');
+      window.setTimeout(() => setCopied(false), 2000);
+    } else {
+      showToast('تعذر نسخ الأكواد', 'error');
+    }
+  };
+
+  const handleCopyCode = async (item: UnitCodeWithUnit) => {
+    const ok = await copyText(item.code);
+    if (ok) {
+      setCopiedCodeId(item.id);
+      showToast('تم نسخ الكود');
+      window.setTimeout(() => {
+        setCopiedCodeId((current) => (current === item.id ? null : current));
+      }, 2000);
+    } else {
+      showToast('تعذر نسخ الكود', 'error');
+    }
+  };
+
+  const handleRevoke = async () => {
+    if (!revoking) {
+      return;
+    }
+    setRevokeBusy(true);
+    try {
+      await revokeUnitCode(revoking.id);
+      setRevoking(null);
+      showToast('تم إلغاء الكود');
+      const rows = await listCodesByUnit(selectedUnitId);
+      setCodes(rows);
+    } catch (err) {
+      showToast(codeErrorMessage(err), 'error');
+      setRevoking(null);
+    } finally {
+      setRevokeBusy(false);
+    }
+  };
+
+  return (
+    <LayoutShell
+      title="أكواد الوحدات"
+      subtitle="تمحمد ياسر أكواد تفعيل للوحدات ومتابعة حالة كل كود"
+      variant="sidebar"
+      nav={<RoleNav />}
+    >
+      <div className="flex flex-col gap-4">
+        <Card title="تمحمد ياسر أكواد" subtitle="كل كود يُستخدم مرة واحدة فقط لتفعيل وحدة مدى الحياة">
+          <div className="flex flex-col gap-3">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <Select
+                label="الوحدة"
+                name="code-unit"
+                value={selectedUnitId}
+                onChange={(event) => {
+                  setSelectedUnitId(event.target.value);
+                  setGeneratedCodes([]);
+                }}
+              >
+                {pricing.length === 0 ? (
+                  <option value="">لا توجد وحدات مسعّرة</option>
+                ) : (
+                  pricing.map((item) => (
+                    <option key={item.unit_id} value={item.unit_id}>
+                      {item.grade_name} — {item.unit_name} ({item.is_free ? 'مجاني' : formatPrice(item.total_price)})
+                    </option>
+                  ))
+                )}
+              </Select>
+              <Input
+                label="عدد الأكواد (1 - 500)"
+                name="code-count"
+                type="number"
+                value={count}
+                min={1}
+                max={500}
+                onChange={(event) => setCount(event.target.value)}
+              />
+              <Input
+                label="ملاحظة (اختياري)"
+                name="code-note"
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+              />
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                loading={generating}
+                icon={<KeyRound aria-hidden="true" className="h-4 w-4" />}
+                onClick={() => void handleGenerate()}
+              >
+                تمحمد ياسر الأكواد
+              </Button>
+            </div>
+            {countError ? (
+              <p role="alert" className="text-xs font-medium text-error">
+                {countError}
+              </p>
+            ) : null}
+          </div>
+          {generatedCodes.length > 0 ? (
+            <div className="glass-tile-success mt-3 rounded-lg border px-4 py-3">
+              <p className="text-sm font-semibold text-primary-strong">
+                تم تمحمد ياسر {generatedCodes.length} كود
+              </p>
+              <p className="mt-1 text-xs text-primary-strong">
+                الكود ظاهر لك فقط — احفظه قبل مغادرة الصفحة.
+              </p>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <pre
+                  className="flex-1 overflow-x-auto font-mono text-sm font-semibold leading-6 text-foreground"
+                  dir="ltr"
+                >
+                  {generatedCodes.join('\n')}
+                </pre>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={
+                    copied ? (
+                      <Check aria-hidden="true" className="h-4 w-4" />
+                    ) : (
+                      <Copy aria-hidden="true" className="h-4 w-4" />
+                    )
+                  }
+                  onClick={() => void copyCodes()}
+                  aria-label={copied ? COPIED_LABEL : 'نسخ'}
+                >
+                  {copied ? COPIED_LABEL : 'نسخ'}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </Card>
+
+        <Card title="الأكواد المولدة">
+          {error ? (
+            <ErrorState message="تعذر تحميل الأكواد" onRetry={() => void load()} />
+          ) : codes === null ? (
+            <div className="flex flex-col gap-3" aria-hidden="true">
+              {Array.from({ length: 4 }, (_, index) => (
+                <Skeleton key={index} className="h-12 w-full rounded-sm" />
+              ))}
+            </div>
+          ) : pricing.length === 0 ? (
+            <EmptyState
+              title="لا توجد وحدات مسعّرة"
+              description="أضف سعرًا لوحدة من صفحة أسعار الوحدات أولاً."
+            />
+          ) : codes.length === 0 ? (
+            <EmptyState
+              title="لا توجد أكواد لهذه الوحدة بعد"
+              description="استخدم النموذج بالأعلى لتمحمد ياسر أكواد لهذه الوحدة."
+            />
+          ) : (
+            <div className="flex flex-col gap-3">
+              {codes.map((item) => {
+                const isUsed = item.status === 'used';
+                const isRevoked = item.status === 'revoked';
+                const isDisabled = isUsed || isRevoked;
+                return (
+                  <div
+                    key={item.id}
+                    data-testid={`code-row-${item.id}`}
+                    className="flex overflow-hidden rounded-2xl border border-white/8 bg-white/[0.02] backdrop-blur transition-all hover:border-violet-400/20 hover:bg-white/[0.04]"
+                  >
+                    <div className="min-w-0 flex-1 p-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <code dir="ltr" className="font-mono text-sm font-bold tracking-widest text-foreground">
+                          {item.code}
+                        </code>
+                        <Badge variant={isUsed ? 'info' : isRevoked ? 'neutral' : 'success'}>
+                          {isUsed ? 'مستخدم' : isRevoked ? 'ملغي' : 'متاح'}
+                        </Badge>
+                      </div>
+                      <p className="mt-1.5 truncate text-xs text-foreground-subtle">
+                        {item.unit_name || '—'} <span className="text-white/15">•</span> {formatDateTime(item.created_at)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                        <span role="cell" data-label="ملاحظة" className="inline-flex items-center gap-1 rounded-lg bg-white/5 px-2 py-1 text-foreground-muted">
+                          {item.note ? item.note : '—'}
+                        </span>
+                        {isUsed && item.used_by_name ? (
+                          <span role="cell" data-label="الطالب المستخدم" className="inline-flex items-center gap-1 rounded-lg bg-sky-500/10 px-2 py-1 text-sky-300">
+                            {item.used_by_name}
+                          </span>
+                        ) : (
+                          <span role="cell" data-label="الطالب المستخدم" className="text-foreground-muted">
+                            —
+                          </span>
+                        )}
+<span role="cell" data-label="الحالة" className="sr-only">
+                          {isUsed ? 'مستخدم' : isRevoked ? 'ملغي' : 'متاح'}
+                        </span>
+                        <span role="cell" data-label="الوحدة" className="sr-only"></span>
+                        <span role="cell" data-label="الكود" className="sr-only"></span>
+                        <span role="cell" data-label="تم إنشاؤه" className="sr-only"></span>
+                        <span role="cell" data-label="ملاحظة" className="sr-only"></span>
+                        <span role="cell" data-label="الطالب المستخدم" className="sr-only"></span>
+                        <span role="cell" data-label="إجراءات" className="sr-only"></span>
+                      </div>
+                    </div>
+                    <div className="flex w-[64px] shrink-0 flex-col divide-y divide-white/5 border-s border-white/8 bg-white/[0.02]">
+                      <button
+                        type="button"
+                        onClick={() => void handleCopyCode(item)}
+                        aria-label={`نسخ ${item.code}`}
+                        className="flex flex-1 flex-col items-center justify-center gap-1 text-foreground-muted transition-colors hover:bg-white/5 hover:text-foreground focus:outline-none focus-visible:bg-white/5"
+                      >
+                        {copiedCodeId === item.id ? <Check className="h-4 w-4 text-emerald-400" /> : <Copy className="h-4 w-4" />}
+                        <span className="text-[10px] font-semibold">{copiedCodeId === item.id ? 'تم' : 'نسخ'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => !isDisabled && setRevoking(item)}
+                        disabled={isDisabled}
+                        aria-label={isDisabled ? 'غير متاح' : 'إلغاء'}
+                        className={`flex flex-1 flex-col items-center justify-center gap-1 transition-colors focus:outline-none ${isDisabled ? 'cursor-not-allowed text-foreground-subtle opacity-40' : 'text-rose-300 hover:bg-rose-500/10 hover:text-rose-200'}`}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        <span className="text-[10px] font-semibold">إلغاء</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <Modal
+        open={revoking !== null}
+        title="إلغاء كود"
+        description={
+          revoking
+            ? `سيصبح الكود ${revoking.code} غير صالح للاستخدام بعد الإلغاء. لا يمكن التراجع عن هذه العملية.`
+            : ''
+        }
+        confirmLabel="نعم، إلغاء"
+        danger
+        loading={revokeBusy}
+        onConfirm={() => void handleRevoke()}
+        onCancel={() => {
+          if (!revokeBusy) {
+            setRevoking(null);
+          }
+        }}
+      />
+    </LayoutShell>
+  );
+}

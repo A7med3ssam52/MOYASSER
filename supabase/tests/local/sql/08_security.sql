@@ -1,0 +1,544 @@
+-- =====================================================================
+-- 08_security.sql -- Phase 9 Security Hardening assertions
+-- ---------------------------------------------------------------------
+-- Dedicated security suite (BLUEPRINT row 9 / PLAN PHASE 9):
+--   1. search_path hardening lock    (every public SECURITY DEFINER pins
+--                                     search_path = public -- B1, no
+--                                     regression lock existed before)
+--   2. storage.objects policy lock   (exactly six policies: the INSERT
+--                                     pdfs_insert_row_backed + the 0021
+--                                     SELECT pdfs_select_row_backed RETURNING
+--                                     mirror + the 0036 boards_insert_row_backed
+--                                     INSERT + the 0041 C1 boards SELECT mirror
+--                                     + the 0041 H1 boards/pdf DELETE pair, all
+--                                     authenticated-only; no UPDATE/anon; RLS
+--                                     ENABLE-without-FORCE per 0021)
+--   3. B2 belt-and-braces scope      (column-scoped notifications UPDATE:
+--                                     even with table-level UPDATE, only
+--                                     is_read/read_at are writable)
+--   4. cross-user IDOR negatives     (mark_read on another user's id is a
+--                                     no-op; purchases own-only;
+--                                     grade-mismatch progress denied)
+--   5. Phase 5/8 boundary matrix     (student cannot reach staff PDF/video/
+--                                     audit RPCs; mr_moyasser cannot reach
+--                                     admin-only audit reads)
+--   6. grant-drift anchors           (anon stays locked out of internal
+--                                     helpers newly added since 05)
+-- Self-contained fixtures (SEC-08-*), removed at the end.
+-- =====================================================================
+
+-- =====================================================================
+-- Section 1: search_path hardening lock (NEW)
+-- Every SECURITY DEFINER function in public MUST pin `search_path = public`
+-- or `search_path = public, extensions` (binding B1; the extensions form is
+-- the canonical Supabase pattern for extension functions like
+-- gen_random_bytes — 0032). Before 08 this was only spot-checked; now it is
+-- a hard regression lock so any future SECURITY DEFINER without the pin
+-- fails CI.
+-- =====================================================================
+SELECT tests.assert(
+    (SELECT count(*) = 0 FROM pg_proc p
+     JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname = 'public' AND p.prosecdef
+       AND NOT (p.proconfig @> ARRAY['search_path=public']
+                OR p.proconfig @> ARRAY['search_path=public, extensions'])),
+    'sec: every public SECURITY DEFINER function pins search_path=public (or public, extensions)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_proc
+     WHERE proname = 'create_unit_codes_internal'
+       AND proconfig @> ARRAY['search_path=public, extensions']),
+    'sec: create_unit_codes_internal pins search_path=public, extensions (0032)');
+
+-- =====================================================================
+-- Section 2: storage.objects policy inventory lock (REVISED, 0041)
+-- The Storage API uploads with INSERT ... RETURNING *, so a SELECT
+-- policy covering the inserted row is REQUIRED (42501 without it).
+-- Exactly SIX policies may exist:
+--   * pdfs_insert_row_backed FOR INSERT TO authenticated (0015/0020,
+--     pending-only: is_ready=false AND is_primary=false)
+--   * pdfs_select_row_backed FOR SELECT TO authenticated (0021, the
+--     row-backed RETURNING mirror, same pending-only scope)
+--   * boards_insert_row_backed FOR INSERT TO authenticated (0036, the
+--     boards-bucket twin of the 0015 INSERT pattern: row-backed on
+--     lesson_boards with the '{uuid}/{uuid}.{jpg|jpeg|png|webp}' shape)
+--   * boards_select_row_backed FOR SELECT TO authenticated (0041 C1,
+--     the boards RETURNING mirror - same scope as its INSERT policy:
+--     NO is_ready filter)
+--   * boards_delete_row_backed FOR DELETE TO authenticated (0041 H1,
+--     staff-only: is_admin/is_mr_moyasser/is_teacher, row-backed)
+--   * pdfs_delete_row_backed FOR DELETE TO authenticated (0041 H1,
+--     staff-only, row-backed on lesson_pdfs)
+-- No UPDATE and no anon surface may ever be reintroduced, and
+-- storage.objects must stay ENABLE-without-FORCE (0021 H2: the storage
+-- service role must not be subject to RLS on its own bookkeeping).
+-- =====================================================================
+SELECT tests.assert(
+    (SELECT count(*) = 6 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'),
+    'sec: exactly six storage.objects policies (2x INSERT + 2x SELECT + 2x DELETE)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'pdfs_insert_row_backed'
+        AND cmd = 'INSERT' AND permissive = 'PERMISSIVE'
+        AND roles::text = '{authenticated}'),
+    'sec: pdfs_insert_row_backed FOR INSERT TO authenticated');
+
+SELECT tests.assert(
+    (SELECT COALESCE(with_check, qual) LIKE '%is_ready = false%'
+        AND COALESCE(with_check, qual) LIKE '%is_primary = false%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'pdfs_insert_row_backed'),
+    'sec: pdfs_insert_row_backed is pending-only (0020 HARD-2)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'pdfs_select_row_backed'
+        AND cmd = 'SELECT' AND permissive = 'PERMISSIVE'
+        AND roles::text = '{authenticated}'),
+    'sec: pdfs_select_row_backed FOR SELECT TO authenticated exists (0021 H1)');
+
+SELECT tests.assert(
+    (SELECT qual LIKE '%bucket_id = ''pdfs''%'
+        AND qual LIKE '%lesson_pdfs%'
+        AND qual LIKE '%is_ready = false%'
+        AND qual LIKE '%is_primary = false%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'pdfs_select_row_backed'),
+    'sec: pdfs_select_row_backed is the pending-only row-backed mirror (0021 H1)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_insert_row_backed'
+        AND cmd = 'INSERT' AND permissive = 'PERMISSIVE'
+        AND roles::text = '{authenticated}'),
+    'sec: boards_insert_row_backed FOR INSERT TO authenticated (0036)');
+
+SELECT tests.assert(
+    (SELECT COALESCE(with_check, qual) LIKE '%bucket_id = ''boards''%'
+        AND COALESCE(with_check, qual) LIKE '%lesson_boards%'
+        AND COALESCE(with_check, qual) LIKE '%deleted_at IS NULL%'
+        AND COALESCE(with_check, qual) LIKE '%jpg|jpeg|png|webp%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_insert_row_backed'),
+    'sec: boards_insert_row_backed is the row-backed boards INSERT (0036, 0015 pattern)');
+
+SELECT tests.assert(
+    (SELECT COALESCE(with_check, qual) NOT LIKE '%is_ready%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_insert_row_backed'),
+    'sec: boards_insert_row_backed has NO is_ready filter (0015 pattern; ready paths already hold their object -> 409 on hosted)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 0 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND cmd = 'UPDATE'),
+    'sec: no UPDATE policy on storage.objects');
+
+-- 0041 C1: the boards SELECT mirror - authenticated, row-backed,
+-- NO is_ready filter (exact scope of boards_insert_row_backed)
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_select_row_backed'
+        AND cmd = 'SELECT' AND permissive = 'PERMISSIVE'
+        AND roles::text = '{authenticated}'),
+    'sec: boards_select_row_backed FOR SELECT TO authenticated (0041 C1)');
+
+SELECT tests.assert(
+    (SELECT qual LIKE '%bucket_id = ''boards''%'
+        AND qual LIKE '%lesson_boards%'
+        AND qual LIKE '%deleted_at IS NULL%'
+        AND qual LIKE '%jpg|jpeg|png|webp%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_select_row_backed'),
+    'sec: boards_select_row_backed is the row-backed boards SELECT mirror (0041 C1)');
+
+SELECT tests.assert(
+    (SELECT qual NOT LIKE '%is_ready%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_select_row_backed'),
+    'sec: boards_select_row_backed has NO is_ready filter (0041 C1, INSERT-policy scope)');
+
+-- 0041 H1: staff-only row-backed DELETE pair (boards + pdfs)
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_delete_row_backed'
+        AND cmd = 'DELETE' AND permissive = 'PERMISSIVE'
+        AND roles::text = '{authenticated}'),
+    'sec: boards_delete_row_backed FOR DELETE TO authenticated (0041 H1)');
+
+SELECT tests.assert(
+    (SELECT qual LIKE '%bucket_id = ''boards''%'
+        AND qual LIKE '%lesson_boards%'
+        AND qual LIKE '%is_admin()%' AND qual LIKE '%is_mr_moyasser()%' AND qual LIKE '%is_teacher()%'
+        AND qual LIKE '%deleted_at IS NULL%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'boards_delete_row_backed'),
+    'sec: boards_delete_row_backed = staff-only row-backed DELETE (0041 H1)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 1 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'pdfs_delete_row_backed'
+        AND cmd = 'DELETE' AND permissive = 'PERMISSIVE'
+        AND roles::text = '{authenticated}'),
+    'sec: pdfs_delete_row_backed FOR DELETE TO authenticated (0041 H1)');
+
+SELECT tests.assert(
+    (SELECT qual LIKE '%bucket_id = ''pdfs''%'
+        AND qual LIKE '%lesson_pdfs%'
+        AND qual LIKE '%is_admin()%' AND qual LIKE '%is_mr_moyasser()%' AND qual LIKE '%is_teacher()%'
+        AND qual LIKE '%deleted_at IS NULL%'
+      FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND policyname = 'pdfs_delete_row_backed'),
+    'sec: pdfs_delete_row_backed = staff-only row-backed DELETE (0041 H1)');
+
+SELECT tests.assert(
+    (SELECT count(*) = 0 FROM pg_policies
+      WHERE schemaname = 'storage' AND tablename = 'objects'
+        AND 'anon' = ANY(roles)),
+    'sec: no anon policy on storage.objects');
+
+SELECT tests.assert(
+    (SELECT relrowsecurity AND NOT relforcerowsecurity
+     FROM pg_class WHERE oid = 'storage.objects'::regclass),
+    'sec: storage.objects is ENABLE-without-FORCE (0021 H2)');
+
+-- live H1 proof: INSERT ... RETURNING * at a pending row-backed path
+-- succeeds for a staff member (the SELECT policy covers the returned
+-- row); the fixture row is cleaned up afterwards.
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000009';
+SET LOCAL ROLE mr_moyasser;
+SELECT tests.expect_rows(
+    'SELECT public.create_pdf_upload_record(''40000000-0000-0000-0000-000000000001'', ''SEC-08-RET.pdf'', 7)',
+    1, 'sec: pending row reserved for RETURNING proof');
+SELECT tests.expect_rows(
+    'INSERT INTO storage.objects (bucket_id, name)
+     VALUES (''pdfs'', (SELECT storage_path FROM public.lesson_pdfs WHERE original_name = ''SEC-08-RET.pdf''))
+     RETURNING id',
+    1, 'sec: INSERT ... RETURNING succeeds at a pending row-backed path (0021 H1)');
+RESET ROLE;
+RESET "app.current_user_id";
+DELETE FROM storage.objects WHERE bucket_id = 'pdfs'
+  AND name = (SELECT storage_path FROM public.lesson_pdfs WHERE original_name = 'SEC-08-RET.pdf');
+DELETE FROM public.lesson_pdfs WHERE original_name = 'SEC-08-RET.pdf';
+SELECT tests.assert(
+    (SELECT NOT EXISTS (SELECT 1 FROM public.lesson_pdfs WHERE original_name = 'SEC-08-RET.pdf')),
+    'sec: RETURNING-proof fixture cleaned up');
+
+-- live 0041 C1 + H1 proof (boards): INSERT ... RETURNING id at a
+-- pending row-backed board path succeeds for staff (the new
+-- boards_select_row_backed mirror covers the returned row); finalize
+-- then succeeds because the object exists (0041 M2); a student DELETE
+-- at the ready row-backed path is a no-op, mr_moyasser removes exactly
+-- the object (0041 H1). Fixtures are cleaned up afterwards.
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000009';
+SET LOCAL ROLE mr_moyasser;
+SELECT tests.expect_rows(
+    'SELECT public.create_board_upload_record(''40000000-0000-0000-0000-000000000001'', ''SEC-08-B1.jpg'', 9)',
+    1, 'sec: pending board row reserved for the board RETURNING proof');
+SELECT tests.expect_rows(
+    'INSERT INTO storage.objects (bucket_id, name)
+     SELECT ''boards'', storage_path FROM public.lesson_boards WHERE original_name = ''SEC-08-B1.jpg''
+     RETURNING id',
+    1, 'sec: INSERT ... RETURNING id succeeds at a pending board path (0041 C1)');
+SELECT tests.expect_rows(
+    'SELECT public.finalize_board_upload((SELECT id FROM public.lesson_boards WHERE original_name = ''SEC-08-B1.jpg''))',
+    1, 'sec: board finalized once its storage object exists (0041 M2)');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- the board is now READY and visible to student A (l1 is accessible):
+-- a student DELETE at the row-backed path is a silent no-op (0 rows)
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE student;
+SELECT tests.expect_rows(
+    'DELETE FROM storage.objects
+     WHERE bucket_id = ''boards''
+       AND name = (SELECT storage_path FROM public.lesson_boards WHERE original_name = ''SEC-08-B1.jpg'')',
+    0, 'sec: student DELETE at a row-backed board path is a no-op (0041 H1)');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- mr_moyasser removes exactly the row-backed object (staff-only DELETE)
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000009';
+SET LOCAL ROLE mr_moyasser;
+SELECT tests.expect_rows(
+    'DELETE FROM storage.objects
+     WHERE bucket_id = ''boards''
+       AND name = (SELECT storage_path FROM public.lesson_boards WHERE original_name = ''SEC-08-B1.jpg'')',
+    1, 'sec: staff DELETE removes exactly the row-backed board object (0041 H1)');
+RESET ROLE;
+RESET "app.current_user_id";
+
+DELETE FROM public.lesson_boards WHERE original_name = 'SEC-08-B1.jpg';
+DELETE FROM public.audit_logs WHERE entity_type IN ('lesson_board', 'lesson_boards');
+SELECT tests.assert(
+    (SELECT NOT EXISTS (SELECT 1 FROM public.lesson_boards WHERE original_name = 'SEC-08-B1.jpg'))
+    AND (SELECT count(*) = 0 FROM storage.objects WHERE bucket_id = 'boards'),
+    'sec: board RETURNING/DELETE-proof fixtures cleaned up');
+
+-- =====================================================================
+-- Section 3: B2 belt-and-braces regression (REVISED)
+-- The original draft asserted a "column-scoped" policy
+-- (FOR UPDATE OF is_read, read_at) - invalid PostgreSQL: RLS policies
+-- cannot scope columns, and FOR UPDATE OF is a SELECT row-lock clause
+-- accepting table names only (SQLSTATE 42601). The real B2 enforcement
+-- is the REVOKE in 0010/0020: anon/authenticated hold NO direct UPDATE
+-- privilege (table- or column-level) on notifications - mark-read
+-- exists only via the security-definer RPCs (mark_notification_read /
+-- mark_all_notifications_read, exercised in Section 4). Prove the
+-- grant side stays revoked, and that RLS row-scoping still confines
+-- writes to own rows even if a future change re-grants table-level
+-- UPDATE.
+-- =====================================================================
+SELECT tests.assert(
+    NOT has_table_privilege('anon', 'public.notifications', 'UPDATE'),
+    'sec: anon has no table-level UPDATE on notifications (B2)');
+SELECT tests.assert(
+    NOT has_table_privilege('authenticated', 'public.notifications', 'UPDATE'),
+    'sec: authenticated has no table-level UPDATE on notifications (B2)');
+SELECT tests.assert(
+    NOT has_column_privilege('authenticated', 'public.notifications', 'is_read', 'UPDATE')
+    AND NOT has_column_privilege('authenticated', 'public.notifications', 'read_at', 'UPDATE')
+    AND NOT has_column_privilege('authenticated', 'public.notifications', 'title', 'UPDATE'),
+    'sec: no column-level UPDATE on notifications either (B2)');
+
+-- a probe role with direct table UPDATE (simulates a future re-grant)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sec_b2_probe') THEN
+        CREATE ROLE sec_b2_probe NOLOGIN;
+    END IF;
+END$$;
+GRANT USAGE ON SCHEMA public TO sec_b2_probe;
+GRANT USAGE ON SCHEMA tests   TO sec_b2_probe;
+GRANT SELECT, UPDATE ON TABLE public.notifications TO sec_b2_probe;
+
+-- an own-row notification for A
+INSERT INTO public.notifications (id, user_id, type, title, body, dedup_key, is_read)
+VALUES ('a0000000-0000-0000-0000-0000000000e1', '70000000-0000-0000-0000-000000000001',
+        'system', 'SEC-N1', 'x', 'SEC-08-N1', false)
+ON CONFLICT (id) DO NOTHING;
+
+-- own-row write is allowed (RLS policy applies)
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE sec_b2_probe;
+SELECT tests.expect_rows(
+    'UPDATE public.notifications SET is_read = true WHERE id = ''a0000000-0000-0000-0000-0000000000e1''', 1,
+    'sec: own-row UPDATE allowed under RLS even with a future table-level re-grant');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- another user's row is unreachable even with table-level UPDATE
+INSERT INTO public.notifications (id, user_id, type, title, body, dedup_key, is_read)
+VALUES ('a0000000-0000-0000-0000-0000000000e3', '70000000-0000-0000-0000-000000000002',
+        'system', 'SEC-N3', 'x', 'SEC-08-N3', false)
+ON CONFLICT (id) DO NOTHING;
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE sec_b2_probe;
+SELECT tests.expect_rows(
+    'UPDATE public.notifications SET title = ''HACKED'' WHERE id = ''a0000000-0000-0000-0000-0000000000e3''', 0,
+    'sec: cross-user UPDATE blocked by RLS row scope (own rows only)');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- the probe writes must have confined to the intended rows
+SELECT tests.assert(
+    (SELECT title = 'SEC-N1' AND is_read FROM public.notifications WHERE id = 'a0000000-0000-0000-0000-0000000000e1'),
+    'sec: own-row probe UPDATE applied only to own row');
+SELECT tests.assert(
+    (SELECT title = 'SEC-N3' AND NOT is_read FROM public.notifications WHERE id = 'a0000000-0000-0000-0000-0000000000e3'),
+    'sec: cross-user probe attempt mutated nothing');
+
+REVOKE ALL ON TABLE public.notifications FROM sec_b2_probe;
+REVOKE USAGE ON SCHEMA public FROM sec_b2_probe;
+REVOKE USAGE ON SCHEMA tests FROM sec_b2_probe;
+DROP ROLE IF EXISTS sec_b2_probe;
+DELETE FROM public.notifications
+WHERE id IN ('a0000000-0000-0000-0000-0000000000e1', 'a0000000-0000-0000-0000-0000000000e3');
+
+-- =====================================================================
+-- Section 4: cross-user IDOR negatives (NEW)
+-- =====================================================================
+-- (a) mark_notification_read on ANOTHER user's notification is a no-op
+INSERT INTO public.notifications (id, user_id, type, title, body, dedup_key, is_read)
+VALUES ('a0000000-0000-0000-0000-0000000000e2', '70000000-0000-0000-0000-000000000002',
+        'system', 'SEC-N2', 'x', 'SEC-08-N2', false)
+ON CONFLICT (id) DO NOTHING;
+
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE student;
+SELECT public.mark_notification_read('a0000000-0000-0000-0000-0000000000e2');
+SELECT tests.assert(
+    (SELECT public.mark_all_notifications_read() IS NOT NULL), 'sec: mark_all returns normally');
+RESET ROLE;
+RESET "app.current_user_id";
+SELECT tests.assert(
+    (SELECT NOT is_read FROM public.notifications WHERE id = 'a0000000-0000-0000-0000-0000000000e2'),
+    'sec: mark_notification_read on another user''s id is a no-op');
+DELETE FROM public.notifications WHERE id = 'a0000000-0000-0000-0000-0000000000e2';
+
+-- (b) get_my_unit_purchases is own-only (0028). A owns u1 from the 02/04
+-- fixtures; no student may ever see another student's purchase rows.
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE student;
+SELECT tests.assert(
+    (SELECT EXISTS (SELECT 1 FROM public.get_my_unit_purchases()
+      WHERE unit_id = '30000000-0000-0000-0000-000000000001')),
+    'sec: get_my_unit_purchases returns own purchase');
+SELECT tests.assert(
+    (SELECT NOT EXISTS (SELECT 1 FROM public.get_my_unit_purchases()
+      WHERE student_id <> '70000000-0000-0000-0000-000000000001')),
+    'sec: get_my_unit_purchases never exposes another student''s purchase');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- (c) upsert_progress on a lesson of another grade is denied
+-- (l6 ...006 is published on grade 2; A is grade 1 with no grade-2 purchase)
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE student;
+SELECT tests.expect_error(
+    'SELECT public.upsert_progress(''40000000-0000-0000-0000-000000000006'', 10, 50)',
+    'P0001', 'access_denied');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- =====================================================================
+-- Section 5: Phase 5/8 boundary matrix (student / mr_moyasser)
+-- Finalize/audit surfaces not already covered by 04/06/07:
+--   student -> finalize_pdf_upload  access_denied (staff wrapper, 0007:810)
+--   mr_moyasser -> list/count_audit_logs permission_denied (admin-only)
+--   mr_moyasser -> get_dashboard_stats ALLOWED (0028: staff surface)
+-- =====================================================================
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000001';
+SET LOCAL ROLE student;
+SELECT tests.expect_error(
+    'SELECT public.finalize_pdf_upload(gen_random_uuid())',
+    'P0001', 'access_denied');
+RESET ROLE;
+RESET "app.current_user_id";
+
+SET LOCAL "app.current_user_id" = '70000000-0000-0000-0000-000000000009';
+SET LOCAL ROLE mr_moyasser;
+SELECT tests.expect_error('SELECT public.list_audit_logs()', 'P0001', 'permission_denied');
+SELECT tests.expect_error('SELECT public.count_audit_logs()', 'P0001', 'permission_denied');
+SELECT tests.assert((SELECT public.get_dashboard_stats() IS NOT NULL),
+    'sec: mr_moyasser can call get_dashboard_stats (0028 staff surface)');
+RESET ROLE;
+RESET "app.current_user_id";
+
+-- =====================================================================
+-- Section 6: grant-drift negative anchors (NEW)
+-- The internal helpers added after 05 stay locked for anon (mirrors the
+-- authenticated checks in 05:112-125). Guards against a future system
+-- function silently widening the anon executable surface.
+-- =====================================================================
+SELECT tests.assert(
+    (SELECT count(*) = 4 FROM pg_proc
+     WHERE pronamespace = 'public'::regnamespace
+       AND has_function_privilege('anon', oid, 'EXECUTE')),
+    'sec: anon still has exactly four executable public functions (get_public_settings + list_active_grades + get_public_unit_prices + get_platform_fee)');
+
+-- 0055 presence: student heartbeat + admin reads must stay anon-locked (admin-only RPCs)
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.touch_presence(text, uuid, boolean, boolean)', 'EXECUTE'),
+    'sec: anon cannot exec touch_presence (0055)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.get_online_students()', 'EXECUTE'),
+    'sec: anon cannot exec get_online_students (0055)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.get_student_presence_history(uuid, timestamptz, timestamptz, integer, integer)', 'EXECUTE'),
+    'sec: anon cannot exec get_student_presence_history (0055)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.get_most_active_students(timestamptz, timestamptz, integer)', 'EXECUTE'),
+    'sec: anon cannot exec get_most_active_students (0055)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.cleanup_old_presence_events()', 'EXECUTE'),
+    'sec: anon cannot exec cleanup_old_presence_events (0055)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.close_stale_sessions()', 'EXECUTE'),
+    'sec: anon cannot exec close_stale_sessions (0055 internal)');
+
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.list_audit_logs(timestamptz, timestamptz, text, text, uuid, integer, integer)', 'EXECUTE'),
+    'sec: anon cannot exec list_audit_logs');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.count_audit_logs(timestamptz, timestamptz, text, text, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec count_audit_logs');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.get_dashboard_stats()', 'EXECUTE'),
+    'sec: anon cannot exec get_dashboard_stats');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.finalize_pdf_upload(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec finalize_pdf_upload');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.create_pdf_upload_record(uuid, text, bigint)', 'EXECUTE'),
+    'sec: anon cannot exec create_pdf_upload_record');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.create_video_upload_record(uuid, text, text, text, text, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec create_video_upload_record');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.delete_video_upload_record(uuid, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec delete_video_upload_record');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.set_user_role(uuid, public.user_role)', 'EXECUTE'),
+    'sec: anon cannot exec set_user_role');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.set_role_by_email(text, public.user_role)', 'EXECUTE'),
+    'sec: anon cannot exec set_role_by_email');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.set_video_status(uuid, public.video_status, integer, text, text, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec set_video_status');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.audit_log(text, text, uuid, jsonb)', 'EXECUTE'),
+    'sec: anon cannot exec audit_log');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.create_board_upload_record(uuid, text, bigint)', 'EXECUTE'),
+    'sec: anon cannot exec create_board_upload_record (0036)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.finalize_board_upload(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec finalize_board_upload (0036)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.delete_board_upload_record(uuid, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec delete_board_upload_record (0036)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.reorder_boards(uuid, uuid[])', 'EXECUTE'),
+    'sec: anon cannot exec reorder_boards (0036)');
+
+-- 0028 internal helpers (purchase model): locked from anon even though
+-- several are granted to authenticated (staff checks are in-function).
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.redeem_unit_code(text)', 'EXECUTE'),
+    'sec: anon cannot exec redeem_unit_code');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.set_unit_price(uuid, numeric)', 'EXECUTE'),
+    'sec: anon cannot exec set_unit_price');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.set_student_grade(uuid, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec set_student_grade');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.create_unit_codes_internal(uuid, integer, text)', 'EXECUTE'),
+    'sec: anon cannot exec create_unit_codes_internal');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.create_unit_codes_for_staff(uuid, integer, text)', 'EXECUTE'),
+    'sec: anon cannot exec create_unit_codes_for_staff');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.list_codes_by_unit(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec list_codes_by_unit');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.revoke_unit_code(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec revoke_unit_code');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.set_lesson_trial(uuid, boolean)', 'EXECUTE'),
+    'sec: anon cannot exec set_lesson_trial');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.list_all_unit_purchases(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec list_all_unit_purchases');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.unit_purchase_stats()', 'EXECUTE'),
+    'sec: anon cannot exec unit_purchase_stats');
+
+-- 0038 unit publish/hide: staff-only, locked from anon
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.publish_unit(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec publish_unit (0038)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.hide_unit(uuid)', 'EXECUTE'),
+    'sec: anon cannot exec hide_unit (0038)');
+
+-- 0042 multi-video RPCs + internal helper: staff-only surface, locked
+-- from anon (the video policy gate itself is exercised in 12_videos)
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.add_youtube_video(uuid, text, text)', 'EXECUTE'),
+    'sec: anon cannot exec add_youtube_video (0042)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.delete_lesson_video(uuid, uuid)', 'EXECUTE'),
+    'sec: anon cannot exec delete_lesson_video (0042)');
+SELECT tests.assert(NOT has_function_privilege('anon', 'public.youtube_video_id_from_url(text)', 'EXECUTE'),
+    'sec: anon cannot exec youtube_video_id_from_url (0042)');
+
+-- =====================================================================
+-- Cleanup
+-- =====================================================================
+RESET ROLE;
+RESET "app.current_user_id";
