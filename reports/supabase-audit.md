@@ -148,7 +148,7 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKe
 5.  **إصلاح `getMyLessonAccess` و `listUnitPricing` fallbacks (F-05/F-06):** لا تعيد نفس الـ RPC؛ ابنِ fallback حقيقي.
 6.  **إصلاح `StudentLessonPage` load (F-12):** حوّل `Promise.all` إلى `allSettled` واعرض كل قسم (video/pdf/boards) بخطأ مستقل.
 7.  **فصل أخطاء `CodesPage` (F-14):** `pricingError` vs `codesError`.
-8.  **تمحمد ياسر `CACHE_VERSION` تلقائيًا (F-18/F-19):** اربطه بـ `package.json` version أو hash.
+8.  **توليد `CACHE_VERSION` تلقائيًا (F-18/F-19):** اربطه بـ `package.json` version أو hash.
 
 ### P2 — تحسين مستمر
 

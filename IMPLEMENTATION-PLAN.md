@@ -3,7 +3,7 @@
 > **نطاق هذه الخطة:** استبدال نظام الاشتراكات الزمني (subscriptions / pricing_plans / subscription_codes / code_redemptions) بنظام شراء **دائم (lifetime)** لكل وحدة تعليمية عبر **أكواد (codes)** فقط — بلا منح يدوي وبلا دفع إلكتروني؛ الطالب يطلب الكود عبر **واتساب** ويدخّله في التطبيق.
 >
 > **قاعدة صارمة:** لا يجوز تعديل أي ملف سوى هذا الملف. كل التغييرات تُنفَّذ وفق ما هو موصوف هنا، وبالترتيب المذكور.
-> **أسلوب الترحيل:** المخطط الحالي مبني على ترحيلات تراكمية (migrations) لا تُعدَّل أبداً؛ كل الإزالات والإضافات تتم في ترحيلات **جديدة** (0028/0029/0030)، ويُعاد تمحمد ياسر `supabase-full-schema.sql` في النهاية.
+> **أسلوب الترحيل:** المخطط الحالي مبني على ترحيلات تراكمية (migrations) لا تُعدَّل أبداً؛ كل الإزالات والإضافات تتم في ترحيلات **جديدة** (0028/0029/0030)، ويُعاد توليد `supabase-full-schema.sql` في النهاية.
 
 ---
 
@@ -68,7 +68,7 @@ can_access_lesson(p_lesson_id)
    - Frontend: `npm run typecheck`, `npm run lint`, `npm run build`, `npm run test` (vitest).
    - Edge Functions: `deno test` داخل كل مجلد دالة (المجلدات `*-test` إن وُجدت و `index_test.ts`).
    - Harness محلي: `cd supabase/tests/local; npm start`.
-   - إعادة تمحمد ياسر المخطط: `node scripts/regen-schema.mjs`.
+   - إعادة توليد المخطط: `node scripts/regen-schema.mjs`.
 3. **جرد المستندات المرجعية المطلوب تحديثها لاحقاً (المرحلة 5):**
    `README.md`, `.env.example`, `DATABASE.md`, `SECURITY.md`, `ARCHITECTURE.md`, `BLUEPRINT.md`, `TESTING.md`, `STYLE.md`, أي `UI-*.md`.
 4. **تسجيل الأعداد المرجعية الحالية (للمقارنة في المرحلة 8):**
@@ -332,7 +332,7 @@ STABLE SECURITY DEFINER ... $$;
 - `unit_inactive` — السعر غير نشط أو الوحدة غير منشورة.
 - `unit_not_in_student_grade` — الوحدة من صف آخر.
 - `unit_already_purchased` — الطالب يملك شراءً نشطاً لهذه الوحدة.
-- (`invalid_count` تُستخدم فقط في مسار تمحمد ياسر الأكواد §3.7-ب، ليست خطأ تفعيل.)
+- (`invalid_count` تُستخدم فقط في مسار توليد الأكواد §3.7-ب، ليست خطأ تفعيل.)
 
 **منطق `redeem_unit_code` المطلوب:**
 ```
@@ -355,7 +355,7 @@ STABLE SECURITY DEFINER ... $$;
 **ب) دوال الأكواد (فريق الإدارة — staff: admin + mr_moyasser + teacher):**
 
 ```sql
--- تمحمد ياسر داخلي (لا منح عميلية عليه؛ يعزى المنشئ عبر auth.uid() أو app.system_actor_id)
+-- توليد داخلي (لا منح عميلية عليه؛ يعزى المنشئ عبر auth.uid() أو app.system_actor_id)
 CREATE OR REPLACE FUNCTION public.create_unit_codes_internal(
     p_unit_pricing_id uuid, p_count integer, p_note text DEFAULT NULL)
 RETURNS SETOF public.unit_codes ... $$;
@@ -375,7 +375,7 @@ RETURNS void ... $$;
 -- أخطاء: code_not_found / code_already_used (لا يُلغى كود مستخدم) / code_not_revocable
 ```
 
-**صيغة الكود:** `MYSR-` متبوعاً بـ 8–12 خانة `A-Z0-9` (تمحمد ياسر عشوائي آمن `gen_random_bytes` + خوارزمية أبجدية مختلطة، بدون أحرف ملتبسة). فحص التفرد عبر قيد UNIQUE مع إعادة محاولة عند التصادم.
+**صيغة الكود:** `MYSR-` متبوعاً بـ 8–12 خانة `A-Z0-9` (توليد عشوائي آمن `gen_random_bytes` + خوارزمية أبجدية مختلطة، بدون أحرف ملتبسة). فحص التفرد عبر قيد UNIQUE مع إعادة محاولة عند التصادم.
 
 **ج) دوال الأسعار:**
 
@@ -574,7 +574,7 @@ enabled = true
 - **الإدخال:** `{ unit_id: string, count: number, note?: string }` عبر POST.
 - **التحقق:** استدعاء RPC `create_unit_codes_for_staff(unit_id, count, note)` بترخيص المستخدم نفسه (forwarding verified user JWT) — لا service_role.
 - **الاستجابة:** `{ ok: true, codes: string[] }`؛ الأخطاء تُعكس حرفياً من RPC: `unit_not_found`, `unit_inactive`, `invalid_count`.
-- **الاختبار:** يتحقق من رفض غير staff (403), رفض count خارج 1..500, ونجاح التمحمد ياسر على fixture.
+- **الاختبار:** يتحقق من رفض غير staff (403), رفض count خارج 1..500, ونجاح التوليد على fixture.
 
 ### 4.4 إعادة كتابة بوابات الطالب الثلاث
 
@@ -671,7 +671,7 @@ enabled = true
 - عند `!has_access` → شاشة "هذه الوحدة غير مفعّلة" + زر واتساب + نموذج كود (لا تُحمَّل الفيديوهات/الـ PDF إطلاقاً).
 
 **هـ) `src/features/moyasser/CodesPage.tsx`:**
-- إعادة التسمية "أكواد الوحدات": اختيار وحدة (قائمة من `listUnitPricing`)، عدد الأكواد، تمحمد ياسر عبر `createUnitCodesForStaff`، عرض النتائج مع أزرار نسخ، قائمة أكواد الوحدة `listCodesByUnit` مع زر إلغاء `revokeUnitCode` (الكود المستخدم لا يُلغى — رسالة `code_already_used`).
+- إعادة التسمية "أكواد الوحدات": اختيار وحدة (قائمة من `listUnitPricing`)، عدد الأكواد، توليد عبر `createUnitCodesForStaff`، عرض النتائج مع أزرار نسخ، قائمة أكواد الوحدة `listCodesByUnit` مع زر إلغاء `revokeUnitCode` (الكود المستخدم لا يُلغى — رسالة `code_already_used`).
 
 **و) `src/features/moyasser/PricingPage.tsx`:**
 - إعادة التسمية "أسعار الوحدات": جدول وحدات مع سعر أساس/رسوم/إجمالي.
@@ -699,7 +699,7 @@ enabled = true
 ### 5.7 اختبارات vitest
 
 - تحديث كل `.test.tsx` يشير إلى أنواع/صفحات/دوال محذوفة.
-- اختبارات جديدة: `UnitsPage` (تفعيل ناجح/فاشل بكل الأخطاء)، `CodesPage` (تمحمد ياسر/إلغاء)، `PricingPage` (تعديل admin، عرض teacher)، `LandingPage` (أسعار + واتساب)، `StudentLessonPage` (حالة القفل)، `getMyLessonAccess` بوابة.
+- اختبارات جديدة: `UnitsPage` (تفعيل ناجح/فاشل بكل الأخطاء)، `CodesPage` (توليد/إلغاء)، `PricingPage` (تعديل admin، عرض teacher)، `LandingPage` (أسعار + واتساب)، `StudentLessonPage` (حالة القفل)، `getMyLessonAccess` بوابة.
 
 ### 5.8 معايير النجاح
 
@@ -759,9 +759,9 @@ enabled = true
 
 ---
 
-## 7) المرحلة 5: إعادة تمحمد ياسر المخطط + الوثائق
+## 7) المرحلة 5: إعادة توليد المخطط + الوثائق
 
-### 7.1 إعادة تمحمد ياسر `supabase-full-schema.sql`
+### 7.1 إعادة توليد `supabase-full-schema.sql`
 ```powershell
 node scripts/regen-schema.mjs
 ```
@@ -892,7 +892,7 @@ CREATE INDEX lesson_comments_lesson_idx ON public.lesson_comments(lesson_id);
 # 1. قاعدة البيانات (معايير التحقق)
 cd supabase/tests/local; npm install; npm start        # ALL GREEN على كل ملفات sql/ المدرجة في run-tests.mjs (01..08 ثم +09 +10)
 
-# 2. إعادة تمحمد ياسر المخطط (بعد كل مرحلة تضيف ترحيلاً: بعد 5 و6 و7)
+# 2. إعادة توليد المخطط (بعد كل مرحلة تضيف ترحيلاً: بعد 5 و6 و7)
 cd ..\..\..; node scripts/regen-schema.mjs             # range 0001..0030 بعد المرحلة 7
 
 # 3. الدوال الطرفية

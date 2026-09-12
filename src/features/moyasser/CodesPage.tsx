@@ -35,9 +35,9 @@ const CODE_ERROR_MESSAGES: Record<string, string> = {
   code_already_used: 'الكود المستخدم لا يمكن إلغاؤه',
   permission_denied: 'ليست لديك صلاحية',
   access_denied: 'ليست لديك صلاحية',
-  system_actor_required: 'حدث خطأ داخلي في تمحمد ياسر الأكواد',
+  system_actor_required: 'حدث خطأ داخلي في توليد الأكواد',
   unit_pricing_not_found: 'لا يوجد تسعير لهذه الوحدة',
-  generation_failed: 'فشل تمحمد ياسر الأكواد — حاول مرة أخرى',
+  generation_failed: 'فشل توليد الأكواد — حاول مرة أخرى',
 };
 
 function codeErrorMessage(error: unknown): string {
@@ -139,7 +139,7 @@ export function CodesPage() {
     try {
       const result = await createUnitCodesForStaff(selectedUnitId, countNumber, note.trim() || null);
       setGeneratedCodes(result.map((item) => item.code));
-      showToast(`تم تمحمد ياسر ${result.length} كود بنجاح`);
+      showToast(`تم توليد ${result.length} كود بنجاح`);
       const rows = await listCodesByUnit(selectedUnitId);
       setCodes(rows);
     } catch (err) {
@@ -198,12 +198,12 @@ export function CodesPage() {
   return (
     <LayoutShell
       title="أكواد الوحدات"
-      subtitle="تمحمد ياسر أكواد تفعيل للوحدات ومتابعة حالة كل كود"
+      subtitle="توليد أكواد تفعيل للوحدات ومتابعة حالة كل كود"
       variant="sidebar"
       nav={<RoleNav />}
     >
       <div className="flex flex-col gap-4">
-        <Card title="تمحمد ياسر أكواد" subtitle="كل كود يُستخدم مرة واحدة فقط لتفعيل وحدة مدى الحياة">
+        <Card title="توليد أكواد" subtitle="كل كود يُستخدم مرة واحدة فقط لتفعيل وحدة مدى الحياة">
           <div className="flex flex-col gap-3">
             <div className="grid gap-3 sm:grid-cols-3">
               <Select
@@ -247,7 +247,7 @@ export function CodesPage() {
                 icon={<KeyRound aria-hidden="true" className="h-4 w-4" />}
                 onClick={() => void handleGenerate()}
               >
-                تمحمد ياسر الأكواد
+                توليد الأكواد
               </Button>
             </div>
             {countError ? (
@@ -259,7 +259,7 @@ export function CodesPage() {
           {generatedCodes.length > 0 ? (
             <div className="glass-tile-success mt-3 rounded-lg border px-4 py-3">
               <p className="text-sm font-semibold text-primary-strong">
-                تم تمحمد ياسر {generatedCodes.length} كود
+                تم توليد {generatedCodes.length} كود
               </p>
               <p className="mt-1 text-xs text-primary-strong">
                 الكود ظاهر لك فقط — احفظه قبل مغادرة الصفحة.
@@ -308,7 +308,7 @@ export function CodesPage() {
           ) : codes.length === 0 ? (
             <EmptyState
               title="لا توجد أكواد لهذه الوحدة بعد"
-              description="استخدم النموذج بالأعلى لتمحمد ياسر أكواد لهذه الوحدة."
+              description="استخدم النموذج بالأعلى لتوليد أكواد لهذه الوحدة."
             />
           ) : (
             <div className="flex flex-col gap-3">

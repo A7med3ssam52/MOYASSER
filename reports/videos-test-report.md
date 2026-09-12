@@ -49,7 +49,7 @@
 
 ## 5. فحص عدم الخروج عن النطاق (git status)
 
-`git diff --name-only` (المعدَّل): `public/sw.js`، `src/app/App.tsx`، `src/data/rpc.ts`، `StudentLessonPage.tsx/.test.tsx`، `LessonAssetsPage.tsx/.test.tsx`، `src/test/supabase-mock.ts`، `src/types/database.ts`، EFان (`create-video-upload-session` + `get-video-playback-url` بكود واختباراتهما)، `supabase-full-schema.sql` (إعادة تمحمد ياسر بـ 42 marker)، وسويتات harness المصرَّح بها فقط: `03_rls.sql` / `04_business.sql` / `05_grants.sql` / `08_security.sql`. الجديد (untracked): `0042_videos_multi_youtube.sql`، `12_videos.sql`، `src/upload/`، `BackgroundUploadBanner.tsx`، `YouTubeEmbed.tsx` + اختباراهما، `reports/videos-test-report.md`، وملفات `.opencode/agent/` (توجيهات agents) + `dump.sql` (أثر قديم 0 بايت — لم يلمسه أحد، خارج النطاق ويُتجاهل).
+`git diff --name-only` (المعدَّل): `public/sw.js`، `src/app/App.tsx`، `src/data/rpc.ts`، `StudentLessonPage.tsx/.test.tsx`، `LessonAssetsPage.tsx/.test.tsx`، `src/test/supabase-mock.ts`، `src/types/database.ts`، EFان (`create-video-upload-session` + `get-video-playback-url` بكود واختباراتهما)، `supabase-full-schema.sql` (إعادة توليد بـ 42 marker)، وسويتات harness المصرَّح بها فقط: `03_rls.sql` / `04_business.sql` / `05_grants.sql` / `08_security.sql`. الجديد (untracked): `0042_videos_multi_youtube.sql`، `12_videos.sql`، `src/upload/`، `BackgroundUploadBanner.tsx`، `YouTubeEmbed.tsx` + اختباراهما، `reports/videos-test-report.md`، وملفات `.opencode/agent/` (توجيهات agents) + `dump.sql` (أثر قديم 0 بايت — لم يلمسه أحد، خارج النطاق ويُتجاهل).
 
 **لا مساس** بميجريشنات 0001..0041 ولا بأي EF خارج `create-video-upload-session`/`get-video-playback-url` (بلا تغيير في upload-pdf/delete-board إلخ — سجل git يؤكد ذلك).
 

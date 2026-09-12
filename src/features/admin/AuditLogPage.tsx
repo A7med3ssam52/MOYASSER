@@ -83,7 +83,7 @@ const ACTION_LABELS: Record<string, string> = {
   'profile.role_change': 'تغيير دور مستخدم',
   'app_settings.update': 'تحديث إعدادات التطبيق',
   'unit.trial_set': 'تعيين درس تجريبي',
-  'unit_code.generate': 'تمحمد ياسر أكواد',
+  'unit_code.generate': 'توليد أكواد',
   'unit_board.upload': 'رفع سبورة',
   'unit_board.delete': 'حذف سبورة',
 };

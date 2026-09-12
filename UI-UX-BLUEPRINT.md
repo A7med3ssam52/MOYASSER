@@ -1,4 +1,4 @@
-﻿﻿# UI-UX-BLUEPRINT.md — Design & UX Blueprint for the UI/UX Refinement
+﻿# UI-UX-BLUEPRINT.md — Design & UX Blueprint for the UI/UX Refinement
 
 > Status: ready for implementation
 > Inputs: `PLAN.md` (functional rules), `STYLE.md` (visual rules), `UI-AUDIT.md` (current-state findings), plus the live test contract (184 tests).
@@ -181,7 +181,7 @@ See per-screen rows in §9 — every async screen specifies its loading (skeleto
 - **Loading**: skeletons shaped like final content (rows for tables, cards for grids, lines for forms). Spinners only for small in-place actions (button loading).
 - **Empty**: icon + title + description + CTA. Never bare "لا توجد بيانات".
 - **Error**: ErrorState with retry; per-asset errors (e.g. `access_denied`, `video_not_ready`) keep their current cards/strings + visual polish.
-- **Success**: toasts (success type); destructive confirmations use destructive modals; bulk ops (e.g. تمحمد ياسر الأكواد) show result summaries (kept: generated-codes box).
+- **Success**: toasts (success type); destructive confirmations use destructive modals; bulk ops (e.g. توليد الأكواد) show result summaries (kept: generated-codes box).
 - **Validation**: inline field errors (`role="alert"`, red border + Arabic message) — never placeholder-only (`STYLE.md §9`).
 
 ---
@@ -230,7 +230,7 @@ Format per screen: **Layout / Primary action / Mobile / Loading / Empty / Error 
 - **Curriculum**: 3-pane (grade select → units `unit-row-*` → lessons `lesson-row-*`) on ≥ `lg`; on mobile panes stack with segmented switching; `deleted-unit-row-*`/`deleted-lesson-row-*` toggles kept; publish/hide/delete/restore actions + modals preserved with Badge statuses. All Arabic labels/strings preserved.
 - **Lesson assets** (`/moyasser/lessons/:lessonId`): lesson info header → video section (`رفع فيديو جديد`, `video-row-*` list w/ status Badges, `معاينة`, `استبدال`, cancel/release flows untouched, TUS UI restyled) → PDF section (`رفع الملف`, pdf rows w/ ready/processing states). The 2 hand-rolled dialogs migrate to `Modal` (D6) — same texts/test-ids. Loading: skeletons; upload progress bar kept (`role="progressbar"`).
 - **Pricing**: moyasser read-only info banner (kept strings) + per-unit pricing table (`unit-price-row-*`); admin: form (unit, base/platform fee/total) + deactivate confirm. Mobile: cards.
-- **Codes**: unit `Select` + count input (1–500) + `تمحمد ياسر الأكواد` → generated box (`نسخ` kept, `dir="ltr"` mono) → codes table (`code-row-*`, status Badges, revoke confirm modal). Empty state for no codes.
+- **Codes**: unit `Select` + count input (1–500) + `توليد الأكواد` → generated box (`نسخ` kept, `dir="ltr"` mono) → codes table (`code-row-*`, status Badges, revoke confirm modal). Empty state for no codes.
 
 ### 9.5 Admin
 - **Dashboard**: reuses moyasser dashboard chrome w/ AdminNav → now sidebar variant; KPI density preserved.
@@ -369,7 +369,7 @@ pm run lint OK.
 
 ### Phase 5 execution report (2026-08-12)
 - **Delivered** (§9.4): all 9 moyasser pages restyled on the design system with logic byte-identical: MoyasserDashboardPage (StatCard KPIs + skeleton loading + activity tables), StudentListPage (search toolbar + shared Table student-row-* + confirm Modals + EmptyState), TrashPage (	rash-row-* + restore/delete Modals), StudentDetailPage (info Card + status Badge + grade Select + disable/enable/delete confirm Modals + حفظ التغييرات), GradesPage (create form + grade-row-*/deleted-grade-row-* + edit/delete Modals), CurriculumPage (3-pane grade/units/lessons with unit-row-*/lesson-row-*/deleted-* toggles + publish/hide/delete/restore Modals + status Badges + mobile segmented switch), LessonAssetsPage (**2 hand-rolled dialogs migrated to Modal per D6** — same texts/test-ids; ideo-row-*/pdf-row-*, status Badges, TUS UI restyled, 
-ole="progressbar" kept), PricingPage (info banner + plan-row-* + admin-gated form/delete), CodesPage (plan Select + count + تمحمد ياسر الأكواد + joined نسخ box dir=ltr mono + code-row-* + revoke Modal + empty state). Verified facts: CodesPage has no admin gating (mr_moyasser generates/revokes — pre-existing), pricing admin-only gating kept.
+ole="progressbar" kept), PricingPage (info banner + plan-row-* + admin-gated form/delete), CodesPage (plan Select + count + توليد الأكواد + joined نسخ box dir=ltr mono + code-row-* + revoke Modal + empty state). Verified facts: CodesPage has no admin gating (mr_moyasser generates/revokes — pre-existing), pricing admin-only gating kept.
 - **Gates**: 
 pm test 184/184 (27 files) OK (final run; two earlier runs had CPU-contention flakiness under parallel forks — every file passes in isolation and the full run was re-verified); 
 pm run typecheck OK; 

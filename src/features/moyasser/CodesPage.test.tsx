@@ -26,7 +26,7 @@ function seedUnit() {
 
 async function generateCodes(user: ReturnType<typeof userEvent.setup>, count = '2') {
   await user.type(await screen.findByLabelText('عدد الأكواد (1 - 500)'), count);
-  await user.click(screen.getByRole('button', { name: 'تمحمد ياسر الأكواد' }));
+  await user.click(screen.getByRole('button', { name: 'توليد الأكواد' }));
 }
 
 function stubExecCommand(result: boolean) {
@@ -57,7 +57,7 @@ describe('CodesPage', () => {
     renderApp('/moyasser/codes');
 
     await user.type(await screen.findByLabelText('عدد الأكواد (1 - 500)'), '501');
-    await user.click(screen.getByRole('button', { name: 'تمحمد ياسر الأكواد' }));
+    await user.click(screen.getByRole('button', { name: 'توليد الأكواد' }));
 
     expect(await screen.findByText('يجب أن يكون العدد بين 1 و 500')).toBeInTheDocument();
     expect(expectRpcCall('create_unit_codes_for_staff')).toBeUndefined();
@@ -76,7 +76,7 @@ describe('CodesPage', () => {
         p_note: null,
       });
     });
-    expect(await screen.findByText('تم تمحمد ياسر 2 كود بنجاح')).toBeInTheDocument();
+    expect(await screen.findByText('تم توليد 2 كود بنجاح')).toBeInTheDocument();
   });
 
   it('renders the generated codes with the copy button and copies them to the clipboard', async () => {
@@ -87,7 +87,7 @@ describe('CodesPage', () => {
 
     await generateCodes(user);
 
-    expect(await screen.findByText('تم تمحمد ياسر 2 كود بنجاح')).toBeInTheDocument();
+    expect(await screen.findByText('تم توليد 2 كود بنجاح')).toBeInTheDocument();
     expect(
       screen.getByText((content) => /MYSR-000001\s+MYSR-000002/.test(content)),
     ).toBeInTheDocument();
@@ -213,7 +213,7 @@ describe('CodesPage', () => {
     await generateCodes(user);
 
     expect(await screen.findByText('الوحدة المختارة غير موجودة')).toBeInTheDocument();
-    expect(screen.queryByText(/تم تمحمد ياسر/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/تم توليد/)).not.toBeInTheDocument();
   });
 
   it('shows the empty state when the selected unit has no codes yet', async () => {
