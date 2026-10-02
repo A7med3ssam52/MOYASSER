@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unified safe localStorage JSON helpers — prevents TypeError from corrupted
  * values left by DevTools, old code versions, or browser extensions.
  * Implements R-08 from unexpected-error-test report.
@@ -48,3 +48,4 @@ export function safeGetArray<T>(key: string): T[] {
     return [];
   }
 }
+

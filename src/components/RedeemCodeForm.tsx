@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+﻿import { useState, type FormEvent } from 'react';
 import { KeyRound } from 'lucide-react';
 
 import { Button } from './Button';
@@ -66,3 +66,4 @@ export function RedeemCodeForm({
     </form>
   );
 }
+

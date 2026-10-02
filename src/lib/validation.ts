@@ -1,6 +1,26 @@
-export const PASSWORD_MIN_LENGTH = 6;
+﻿export const PASSWORD_MIN_LENGTH = 6;
 
 const EMAIL_RE = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+[.][A-Za-z]{2,}$/;
+const ARABIC_WORD_RE = /^[\u0600-\u06FF]+$/;
+
+/**
+ * Student tracking rule: full name must be at least three parts and every
+ * part must be Arabic letters only (no Latin, digits, or symbols).
+ * Returns an Arabic error message, or null when valid.
+ */
+export function validateArabicFullName(value: string): string | null {
+  const parts = value.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return 'الاسم الكامل مطلوب';
+  }
+  if (parts.length < 3) {
+    return 'اكتب الاسم ثلاثيًا على الأقل (مثال: أحمد محمد علي)';
+  }
+  if (!parts.every((part) => ARABIC_WORD_RE.test(part))) {
+    return 'يجب أن تكون كل أجزاء الاسم باللغة العربية فقط';
+  }
+  return null;
+}
 
 export function isValidEmail(value: string): boolean {
   return EMAIL_RE.test(value.trim());
@@ -64,6 +84,15 @@ export function validateRegister(values: RegisterFormValues): FieldErrors<Regist
     errors.guardianPhone = 'رقم ولي الأمر مطلوب';
   } else if (!isValidEgyptianPhone(values.guardianPhone)) {
     errors.guardianPhone = 'رقم ولي الأمر يجب أن يبدأ بـ 01 أو +20';
+  }
+  // رقم الطالب ورقم ولي الأمر لنفس الحساب يجب أن يكونا مختلفين
+  // (المقارنة بالصيغة Canonical لالتقاط 010xxx مقابل +2010xxx).
+  if (
+    !errors.phone &&
+    !errors.guardianPhone &&
+    toCanonicalPhone(values.phone) === toCanonicalPhone(values.guardianPhone)
+  ) {
+    errors.guardianPhone = 'رقم ولي الأمر يجب أن يكون مختلفًا عن رقم الطالب';
   }
   if (!values.address.trim()) {
     errors.address = 'العنوان مطلوب';
@@ -150,3 +179,4 @@ export function validatePasswordChange(
 
   return errors;
 }
+

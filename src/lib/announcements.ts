@@ -1,4 +1,4 @@
-import { getSupabaseClient } from './supabase';
+﻿import { getSupabaseClient } from './supabase';
 
 export type AnnouncementVariant = 'info' | 'warning' | 'success' | 'error';
 export type UserRole = 'student' | 'teacher' | 'mr_moyasser' | 'admin' | 'assistant';

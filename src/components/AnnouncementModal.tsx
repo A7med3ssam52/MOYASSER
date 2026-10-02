@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+﻿import { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 
 import { fetchActiveAnnouncement, type Announcement } from '../lib/announcements';
@@ -91,3 +91,4 @@ export function AnnouncementModal({
     </AdModalShell>
   );
 }
+

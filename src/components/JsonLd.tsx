@@ -1,4 +1,4 @@
-import { Helmet } from 'react-helmet-async';
+﻿import { Helmet } from 'react-helmet-async';
 
 interface JsonLdProps {
   data: Record<string, unknown> | Record<string, unknown>[];
@@ -16,3 +16,4 @@ export function JsonLd({ data }: JsonLdProps) {
     </Helmet>
   );
 }
+

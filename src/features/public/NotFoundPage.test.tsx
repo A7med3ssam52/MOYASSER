@@ -1,4 +1,4 @@
-import { screen } from '@testing-library/react';
+﻿import { screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { resetMockState, setAuthenticatedStudent } from '../../test/supabase-mock';
@@ -24,3 +24,4 @@ describe('NotFoundPage', () => {
     expect(screen.getByRole('link', { name: 'العودة إلى الرئيسية' })).toBeInTheDocument();
   });
 });
+

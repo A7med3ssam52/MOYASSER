@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Eye, Pause, Play, Search, Trash2 } from 'lucide-react';
+import { BellRing, CalendarDays, Download, Eye, Pause, Phone, Play, Search, Trash2 } from 'lucide-react';
 
+import { AvatarImage } from '../../components/AvatarImage';
+import { AvatarPreviewDialog, type PreviewStudent } from '../../components/AvatarPreviewDialog';
+import { Button } from '../../components/Button';
 import { EmptyState } from '../../components/EmptyState';
 import { ErrorState } from '../../components/ErrorState';
 import { Input } from '../../components/Input';
@@ -12,11 +15,12 @@ import { RoleNav } from '../../components/RoleNav';
 import { StatusBadge } from '../../components/StatusBadge';
 import { Textarea } from '../../components/Textarea';
 import { useToast } from '../../components/Toast';
-import { disableStudent, enableStudent, listStudents, softDeleteStudent } from '../../data/rpc';
+import { useAuth } from '../auth/AuthContext';
+import { disableStudent, enableStudent, listStudents, remindMissingAvatars, softDeleteStudent } from '../../data/rpc';
 import { formatDateTime } from '../../lib/format';
 import type { Profile } from '../../types/database';
 
-type StatusFilter = 'all' | 'active' | 'disabled';
+type StatusFilter = 'all' | 'active' | 'disabled' | 'noavatar';
 
 type PendingAction = { kind: 'disable' | 'enable' | 'delete'; student: Profile } | null;
 
@@ -24,6 +28,7 @@ const filterTabs: Array<{ value: StatusFilter; label: string }> = [
   { value: 'all', label: 'الكل' },
   { value: 'active', label: 'نشط' },
   { value: 'disabled', label: 'موقوف' },
+  { value: 'noavatar', label: 'بدون صورة' },
 ];
 
 function modalCopy(pending: NonNullable<PendingAction>): {
@@ -52,11 +57,17 @@ function modalCopy(pending: NonNullable<PendingAction>): {
   };
 }
 
-function StudentsTableSkeleton() {
+function StudentsGridSkeleton() {
   return (
-    <div className="flex flex-col gap-3" aria-hidden="true">
-      {Array.from({ length: 4 }, (_, index) => (
-        <Skeleton key={index} className="h-12 w-full rounded-sm" />
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-hidden="true">
+      {Array.from({ length: 6 }, (_, index) => (
+        <div key={index} className="glass-card flex flex-col items-center p-5">
+          <Skeleton className="h-16 w-16 rounded-full" />
+          <Skeleton className="mt-3 h-4 w-32" />
+          <Skeleton className="mt-2 h-5 w-20 rounded-full" />
+          <Skeleton className="mt-4 h-3 w-full" />
+          <Skeleton className="mt-2 h-3 w-2/3" />
+        </div>
       ))}
     </div>
   );
@@ -64,14 +75,20 @@ function StudentsTableSkeleton() {
 
 export function StudentListPage() {
   const { showToast } = useToast();
+  const { role } = useAuth();
+  // فلتر "بدون صورة" وزر التذكير للأدمن فقط — مخفي عن mr_moyasser و teacher.
+  const isAdmin = role === 'admin';
+  const visibleTabs = isAdmin ? filterTabs : filterTabs.filter((tab) => tab.value !== 'noavatar');
   const [students, setStudents] = useState<Profile[] | null>(null);
   const [error, setError] = useState(false);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [pending, setPending] = useState<PendingAction>(null);
   const [busy, setBusy] = useState(false);
+  const [remindBusy, setRemindBusy] = useState(false);
   const [reason, setReason] = useState('');
   const [reasonError, setReasonError] = useState<string | null>(null);
+  const [previewStudent, setPreviewStudent] = useState<PreviewStudent | null>(null);
 
   const load = useCallback(async () => {
     setError(false);
@@ -87,8 +104,19 @@ export function StudentListPage() {
     void load();
   }, [load]);
 
+  // احتياط: غير الأدمن لا يبقى على فلتر "بدون صورة" أبداً.
+  useEffect(() => {
+    if (!isAdmin && statusFilter === 'noavatar') {
+      setStatusFilter('all');
+    }
+  }, [isAdmin, statusFilter]);
+
   const filtered = (students ?? []).filter((student) => {
-    if (statusFilter !== 'all' && student.status !== statusFilter) {
+    if (statusFilter === 'noavatar') {
+      if (student.avatar_path) {
+        return false;
+      }
+    } else if (statusFilter !== 'all' && student.status !== statusFilter) {
       return false;
     }
     const query = search.trim().toLowerCase();
@@ -107,6 +135,8 @@ export function StudentListPage() {
     setReasonError(null);
     setPending({ kind, student });
   };
+
+  const missingAvatarCount = (students ?? []).filter((student) => !student.avatar_path).length;
 
   const runAction = async (action: NonNullable<PendingAction>) => {
     if (action.kind === 'disable' && reason.trim().length === 0) {
@@ -136,6 +166,23 @@ export function StudentListPage() {
     }
   };
 
+  const handleRemindAll = async () => {
+    if (remindBusy) {
+      return;
+    }
+    setRemindBusy(true);
+    try {
+      const count = await remindMissingAvatars();
+      showToast(
+        count > 0 ? `تم إرسال التذكير إلى ${count} طالب بدون صورة` : 'لا يوجد طلبة بدون صورة حاليًا',
+      );
+    } catch {
+      showToast('تعذر إرسال التذكير. حاول مرة أخرى', 'error');
+    } finally {
+      setRemindBusy(false);
+    }
+  };
+
   return (
     <LayoutShell
       title="إدارة الطلاب"
@@ -143,12 +190,26 @@ export function StudentListPage() {
       variant="sidebar"
       nav={<RoleNav />}
       actions={
-        <Link
-          to="/moyasser/students/trash"
-          className="glass-soft inline-flex h-11 items-center rounded-lg px-4 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
-        >
-          سلة المحذوفات
-        </Link>
+        <div className="flex items-center gap-2">
+          {isAdmin ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<BellRing aria-hidden="true" className="h-4 w-4" />}
+              loading={remindBusy}
+              onClick={() => void handleRemindAll()}
+              className="shrink-0 rounded-xl"
+            >
+              تذكير الكل بالصورة
+            </Button>
+          ) : null}
+          <Link
+            to="/moyasser/students/trash"
+            className="inline-flex h-11 items-center rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-foreground shadow-subtle transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
+          >
+            سلة المحذوفات
+          </Link>
+        </div>
       }
     >
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -163,7 +224,7 @@ export function StudentListPage() {
           />
         </div>
         <div className="flex flex-wrap gap-2" role="group" aria-label="تصفية حسب الحالة">
-          {filterTabs.map((tab) => (
+          {visibleTabs.map((tab) => (
             <button
               key={tab.value}
               type="button"
@@ -172,10 +233,18 @@ export function StudentListPage() {
               className={`rounded-lg px-3.5 py-3 text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 ${
                 statusFilter === tab.value
                   ? 'btn-primary text-primary-foreground'
-                  : 'glass-soft text-foreground-muted hover:bg-white/10 hover:text-foreground'
+                  : 'border border-border bg-surface text-foreground-muted shadow-subtle hover:bg-surface-muted hover:text-foreground'
               }`}
             >
               {tab.label}
+              {tab.value === 'noavatar' && missingAvatarCount > 0 ? (
+                <span
+                  aria-label={`${missingAvatarCount} بدون صورة`}
+                  className="ms-1.5 rounded-full bg-warning/15 px-2 py-0.5 text-xs font-bold text-warning"
+                >
+                  {missingAvatarCount}
+                </span>
+              ) : null}
             </button>
           ))}
         </div>
@@ -184,7 +253,7 @@ export function StudentListPage() {
       {error ? (
         <ErrorState message="تعذر تحميل قائمة الطلاب" onRetry={() => void load()} />
       ) : students === null ? (
-        <StudentsTableSkeleton />
+        <StudentsGridSkeleton />
       ) : filtered.length === 0 ? (
         <EmptyState
           title={students.length === 0 ? 'لا يوجد طلاب مسجلون بعد' : 'لا توجد نتائج مطابقة'}
@@ -195,85 +264,122 @@ export function StudentListPage() {
           }
         />
       ) : (
-        <div className="flex flex-col gap-3">
-          {filtered.map((student) => (
-            <div
-              key={student.id}
-              data-testid={`student-row-${student.id}`}
-              className="flex overflow-hidden rounded-2xl border border-white/8 bg-white/[0.02] backdrop-blur transition-all hover:border-indigo-400/20 hover:bg-white/[0.04]"
-            >
-              <div className="min-w-0 flex-1 p-4">
-                <div className="flex items-center gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-violet-500/25 text-sm font-bold text-indigo-200">
-                    {student.full_name.trim().charAt(0) || 'ط'}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="truncate text-sm font-semibold text-foreground">{student.full_name}</span>
-                      <StatusBadge status={student.status} deleted={Boolean(student.deleted_at)} />
-                    </div>
-                    <p className="mt-1 flex items-center gap-1.5 text-xs text-foreground-subtle" dir="ltr">
-                      {student.phone}
-                      <span className="hidden text-white/15 sm:inline">•</span>
-                      <span className="hidden sm:inline-flex items-center gap-1 text-foreground-subtle" dir="rtl">
-                        {formatDateTime(student.created_at)}
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {filtered.map((student) => {
+            const initial = student.full_name.trim().charAt(0) || 'ط';
+            const isActive = student.status === 'active';
+            return (
+              <article
+                key={student.id}
+                data-testid={`student-row-${student.id}`}
+                className="glass-card flex flex-col overflow-hidden"
+              >
+                <div className="flex flex-col items-center px-4 pt-5 text-center">
+                  <AvatarImage
+                    path={student.avatar_path}
+                    alt={`صورة ${student.full_name}`}
+                    className={`h-16 w-16 shrink-0 rounded-full ring-2 ${
+                      isActive ? 'ring-success/50' : 'ring-warning/50'
+                    }`}
+                    fallback={
+                      <span
+                        aria-hidden="true"
+                        className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full text-xl font-black ring-2 ${
+                          isActive
+                            ? 'bg-primary-soft text-primary-strong ring-success/50'
+                            : 'bg-surface-muted text-foreground-muted ring-warning/50'
+                        }`}
+                      >
+                        {initial}
                       </span>
-                    </p>
+                    }
+                  />
+                  <h3 className="mt-3 w-full truncate text-base font-bold text-foreground">
+                    {student.full_name}
+                  </h3>
+                  <div className="mt-1.5">
+                    <StatusBadge status={student.status} deleted={Boolean(student.deleted_at)} />
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-foreground-subtle sm:hidden">{formatDateTime(student.created_at)}</p>
-                <div className="sr-only" aria-hidden="true">
-                  <div role="cell" data-label="الاسم"></div>
-                  <div role="cell" data-label="رقم الهاتف"></div>
-                  <div role="cell" data-label="الحالة"></div>
-                  <div role="cell" data-label="تاريخ التسجيل"></div>
-                  <div role="cell" data-label="إجراءات">
-                    عرض التفاصيل
+                <dl className="flex flex-col gap-2 px-4 py-4 text-xs">
+                  <div className="flex items-center justify-center gap-1.5 text-foreground-muted">
+                    <dt className="sr-only">رقم الهاتف</dt>
+                    <Phone aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                    <dd className="font-semibold tabular-nums" dir="ltr">
+                      {student.phone}
+                    </dd>
                   </div>
-                </div>
-              </div>
-              <div className="flex w-[64px] shrink-0 flex-col divide-y divide-white/5 border-s border-white/8 bg-white/[0.02]">
-                <Link
-                  to={`/moyasser/students/${student.id}`}
-                  aria-label={`عرض ${student.full_name}`}
-                  className="flex flex-1 flex-col items-center justify-center gap-1 text-indigo-300 transition-colors hover:bg-indigo-500/10 hover:text-indigo-200 focus:outline-none focus-visible:bg-indigo-500/10"
-                >
-                  <Eye className="h-4 w-4" />
-                  <span className="text-[10px] font-semibold">عرض</span>
-                </Link>
-{student.status === 'active' ? (
+                  <div className="flex items-center justify-center gap-1.5 text-foreground-subtle">
+                    <dt className="sr-only">تاريخ التسجيل</dt>
+                    <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                    <dd>انضم {formatDateTime(student.created_at)}</dd>
+                  </div>
+                  {!isActive && student.suspension_reason ? (
+                    <dd className="mx-auto mt-1 max-w-full truncate rounded-lg border border-warning/30 bg-warning/10 px-2.5 py-1 font-medium text-warning">
+                      سبب الإيقاف: {student.suspension_reason}
+                    </dd>
+                  ) : null}
+                </dl>
+                <div className="mt-auto grid grid-cols-3 divide-x divide-border-muted border-t border-border-muted">
+                  <Link
+                    to={`/moyasser/students/${student.id}`}
+                    aria-label={`عرض ${student.full_name}`}
+                    className="flex items-center justify-center gap-1.5 py-3 text-xs font-bold text-primary-strong transition-colors hover:bg-surface-muted focus:outline-none focus-visible:bg-surface-muted"
+                  >
+                    <Eye aria-hidden="true" className="h-4 w-4" />
+                    عرض
+                  </Link>
+                  {isAdmin && student.avatar_path ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setPreviewStudent({
+                          id: student.id,
+                          full_name: student.full_name,
+                          avatar_path: student.avatar_path,
+                        })
+                      }
+                      aria-label={`معاينة صورة ${student.full_name}`}
+                      className="flex items-center justify-center gap-1.5 py-3 text-xs font-bold text-foreground-muted transition-colors hover:bg-surface-muted focus:outline-none"
+                    >
+                      <Download aria-hidden="true" className="h-4 w-4" />
+                      الصورة
+                    </button>
+                  ) : null}
+                  {isActive ? (
                     <button
                       type="button"
                       onClick={() => confirm('disable', student)}
                       aria-label="إيقاف"
-                      className="flex flex-1 flex-col items-center justify-center gap-1 text-amber-300 transition-colors hover:bg-amber-500/10 hover:text-amber-200 focus:outline-none"
+                      className="flex items-center justify-center gap-1.5 py-3 text-xs font-bold text-warning transition-colors hover:bg-surface-muted focus:outline-none"
                     >
-                      <Pause className="h-4 w-4" />
-                      <span className="text-[10px] font-semibold">إيقاف</span>
+                      <Pause aria-hidden="true" className="h-4 w-4" />
+                      إيقاف
                     </button>
                   ) : (
                     <button
                       type="button"
                       onClick={() => confirm('enable', student)}
                       aria-label="تفعيل"
-                      className="flex flex-1 flex-col items-center justify-center gap-1 text-emerald-300 transition-colors hover:bg-emerald-500/10 hover:text-emerald-200 focus:outline-none"
+                      className="flex items-center justify-center gap-1.5 py-3 text-xs font-bold text-success transition-colors hover:bg-surface-muted focus:outline-none"
                     >
-                      <Play className="h-4 w-4" />
-                      <span className="text-[10px] font-semibold">تفعيل</span>
+                      <Play aria-hidden="true" className="h-4 w-4" />
+                      تفعيل
                     </button>
                   )}
-                <button
-                  type="button"
-                  onClick={() => confirm('delete', student)}
-                  aria-label="حذف"
-                  className="flex flex-1 flex-col items-center justify-center gap-1 text-rose-300 transition-colors hover:bg-rose-500/10 hover:text-rose-200 focus:outline-none"
-                >
-                  <Trash2 className="h-4 w-4" />
-                  <span className="text-[10px] font-semibold">حذف</span>
-                </button>
-              </div>
-            </div>
-          ))}
+                  <button
+                    type="button"
+                    onClick={() => confirm('delete', student)}
+                    aria-label="حذف"
+                    className="flex items-center justify-center gap-1.5 py-3 text-xs font-bold text-error transition-colors hover:bg-surface-muted focus:outline-none"
+                  >
+                    <Trash2 aria-hidden="true" className="h-4 w-4" />
+                    حذف
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
 
@@ -316,6 +422,9 @@ export function StudentListPage() {
           </div>
         ) : null}
       </Modal>
+
+      <AvatarPreviewDialog student={previewStudent} onClose={() => setPreviewStudent(null)} />
     </LayoutShell>
   );
 }
+

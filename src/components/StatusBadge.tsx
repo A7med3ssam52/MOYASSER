@@ -1,4 +1,4 @@
-import type { AccountStatus, CodeStatus, UnitPurchaseStatus } from '../types/database';
+﻿import type { AccountStatus, CodeStatus, UnitPurchaseStatus } from '../types/database';
 import { Badge } from './Badge';
 
 interface StatusBadgeProps {
@@ -32,3 +32,4 @@ export function CodeBadge({ status }: { status: CodeStatus }) {
   }
   return <Badge variant="neutral">متاح</Badge>;
 }
+

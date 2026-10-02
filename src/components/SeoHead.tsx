@@ -1,4 +1,4 @@
-import { Helmet } from 'react-helmet-async';
+﻿import { Helmet } from 'react-helmet-async';
 import { useLocation } from 'react-router-dom';
 
 import {
@@ -150,3 +150,4 @@ export function SeoHead({
     </Helmet>
   );
 }
+

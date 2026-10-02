@@ -1,3 +1,4 @@
+﻿import { useState } from 'react';
 import { AlertCircle } from 'lucide-react';
 
 import { buildWhatsAppLink } from '../lib/format';
@@ -7,7 +8,17 @@ import { Button } from './Button';
 import { Card } from './Card';
 import { PriceTag } from './PriceTag';
 import { RedeemCodeForm } from './RedeemCodeForm';
+import { VoucherRedeemOption } from './VoucherRedeemOption';
 import { WhatsAppIcon } from './WhatsAppIcon';
+
+interface VoucherOption {
+  /** Show the explicit opt-in (student holds a valid voucher). */
+  available: boolean;
+  /** Unit-specific platform fee that will be waived. */
+  waivedFee: number | null;
+  /** e.g. "صالح 12 يوم". */
+  validityLabel?: string | null;
+}
 
 interface LockedUnitCardProps {
   unit: PublicUnitPrice | null;
@@ -15,9 +26,11 @@ interface LockedUnitCardProps {
   gradeName?: string;
   whatsappNumber?: string | null;
   whatsappMessage?: string | null;
-  onRedeem?: (code: string) => Promise<boolean>;
+  onRedeem?: (code: string, useVoucher?: boolean) => Promise<boolean>;
   redeemBusy?: boolean;
   redeemError?: string | null;
+  voucher?: VoucherOption;
+  voucherTestId?: string;
 }
 
 export function LockedUnitCard({
@@ -29,18 +42,22 @@ export function LockedUnitCard({
   onRedeem,
   redeemBusy = false,
   redeemError = null,
+  voucher,
+  voucherTestId,
 }: LockedUnitCardProps) {
+  const [useVoucherChecked, setUseVoucherChecked] = useState(false);
   const whatsappLink = whatsappNumber ? buildWhatsAppLink(whatsappNumber, whatsappMessage) : null;
   const hasPrice = unit !== null;
   const isFree = hasPrice && ((unit as { is_free?: boolean }).is_free || unit.total_price === 0);
+  const showVoucherOption = Boolean(onRedeem && voucher?.available);
 
   if (isFree) {
     return (
-      <Card title={unitName} subtitle={`${unit.grade_name ?? gradeName ?? ''} — مجاني`} className="conic-ring spotlight-card">
+      <Card title={unitName} subtitle={`${unit.grade_name ?? gradeName ?? ''} — مجاني`}>
         <div className="flex flex-col gap-4">
           <PriceTag pricing={unit} />
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="success" className="shadow-[0_0_16px_-6px_rgba(52,211,153,0.5)]">مجاني</Badge>
+            <Badge variant="success">مجاني</Badge>
             <span className="text-xs text-foreground-subtle">متاح لجميع الطلاب بدون كود</span>
           </div>
         </div>
@@ -49,13 +66,13 @@ export function LockedUnitCard({
   }
 
   return (
-    <Card title={unitName} subtitle={hasPrice ? (unit.grade_name ?? gradeName ?? '') : 'السعر غير محدد — تواصل مع الإدارة'} className="conic-ring spotlight-card">
+    <Card title={unitName} subtitle={hasPrice ? (unit.grade_name ?? gradeName ?? '') : 'السعر غير محدد — تواصل مع الإدارة'}>
       <div className="flex flex-col gap-4">
         {hasPrice ? (
           <PriceTag pricing={unit} />
         ) : (
           <div className="glass-soft flex items-center gap-3 p-3 rounded-xl">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-300">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[rgba(217,167,95,0.1)] text-warning">
               <AlertCircle className="h-5 w-5" aria-hidden="true" />
             </span>
             <div>
@@ -83,9 +100,20 @@ export function LockedUnitCard({
           ) : null}
         </div>
         {onRedeem ? (
-          <div className="border-t border-white/5 pt-4">
+          <div className="border-t border-border-muted pt-4">
+            {showVoucherOption ? (
+              <div className="mb-3">
+                <VoucherRedeemOption
+                  waivedFee={voucher?.waivedFee ?? null}
+                  validityLabel={voucher?.validityLabel}
+                  checked={useVoucherChecked}
+                  onChange={setUseVoucherChecked}
+                  testId={voucherTestId}
+                />
+              </div>
+            ) : null}
             <RedeemCodeForm
-              onSubmit={onRedeem}
+              onSubmit={(code) => onRedeem(code, showVoucherOption && useVoucherChecked)}
               busy={redeemBusy}
               error={redeemError}
               inputLabel={unitName ? `كود تفعيل ${unitName}` : 'كود التفعيل'}
@@ -98,3 +126,4 @@ export function LockedUnitCard({
     </Card>
   );
 }
+

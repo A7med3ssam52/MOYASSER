@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { GraduationCap, PlayCircle, ChevronDown, PackageOpen } from 'lucide-react';
+import { GraduationCap, PlayCircle, Lock, PackageOpen, Check } from 'lucide-react';
 
 import { Badge } from '../../components/Badge';
 import { EmptyState } from '../../components/EmptyState';
@@ -12,8 +12,10 @@ import { PageHeader } from '../../components/PageHeader';
 import { Skeleton } from '../../components/Skeleton';
 import { StudentNav } from '../../components/StudentNav';
 import { useToast } from '../../components/Toast';
+import { voucherValidityLabel } from '../../components/VoucherRedeemOption';
 import {
   getGradeById,
+  getMyStreak,
   getMyUnitPurchases,
   getPublicSettings,
   getPublicUnitPrices,
@@ -28,6 +30,7 @@ import { cn } from '../../lib/cn';
 import type {
   Grade,
   Lesson,
+  MyStreak,
   Progress,
   PublicSettings,
   PublicUnitPrice,
@@ -84,9 +87,11 @@ export function StudentCurriculumPage() {
   const [prices, setPrices] = useState<PublicUnitPrice[]>([]);
   const [settings, setSettings] = useState<PublicSettings | null>(null);
   const [progressByLesson, setProgressByLesson] = useState<Map<string, Progress>>(new Map());
-  const [trialLessons, setTrialLessons] = useState<TrialLessonRow[]>([]);
-  const [error, setError] = useState(false);
-  const [expandedUnits, setExpandedUnits] = useState<Set<string>>(new Set());
+    const [trialLessons, setTrialLessons] = useState<TrialLessonRow[]>([]);
+  const [streak, setStreak] = useState<MyStreak | null>(null);
+  const [error, setError] = useState(false);  // Split-board navigation: one active unit at a time (sidebar on desktop,
+  // horizontal chips on mobile) instead of the old accordion expansion.
+  const [activeUnitId, setActiveUnitId] = useState<string | null>(null);
   const [redeemByUnit, setRedeemByUnit] = useState<Record<string, { busy: boolean; error: string | null }>>({});
 
   const load = useCallback(async () => {
@@ -117,6 +122,7 @@ export function StudentCurriculumPage() {
         getPublicUnitPrices(),
         getPublicSettings(),
         getTrialLessons(),
+        getMyStreak(),
       ]);
       const allUnits = settled[0].status === 'fulfilled' ? settled[0].value : [];
       const progressRows = settled[1].status === 'fulfilled' ? settled[1].value : [];
@@ -124,6 +130,7 @@ export function StudentCurriculumPage() {
       const pricesResult = settled[3].status === 'fulfilled' ? settled[3].value : [];
       const settingsResult = settled[4].status === 'fulfilled' ? (settled[4].value as typeof settings) : null;
       const trialRows = settled[5].status === 'fulfilled' ? settled[5].value : [];
+      const streakResult = settled[6].status === 'fulfilled' ? (settled[6].value as MyStreak) : null;
 
       // If the critical units fetch failed, show error but keep other data
       if (settled[0].status === 'rejected') {
@@ -153,6 +160,7 @@ export function StudentCurriculumPage() {
       setProgressByLesson(new Map(progressRows.map((row) => [row.lesson_id, row])));
       setPurchases(purchasesResult);
       setPrices(pricesResult);
+      setStreak(streakResult);
       if (settingsResult) setSettings(settingsResult);
       setTrialLessons(trialRows);
     } catch {
@@ -172,21 +180,51 @@ export function StudentCurriculumPage() {
     };
   }, [load]);
 
-  const focusUnitId = searchParams.get('unit');
+  // Fix #13 — إبطال cache المنهج بعد toggle/upsert: إعادة تحميل التقدم فقط
+  // عند حدث lesson-progress-updated (بدون إعادة تحميل الوحدات كاملة).
   useEffect(() => {
-    if (!focusUnitId) {
+    const handler = () => {
+      listMyProgress()
+        .then((rows) => setProgressByLesson(new Map(rows.map((row) => [row.lesson_id, row]))))
+        .catch(() => {
+          // best-effort
+        });
+    };
+    window.addEventListener('lesson-progress-updated', handler);
+    return () => window.removeEventListener('lesson-progress-updated', handler);
+  }, []);
+
+  const focusUnitId = searchParams.get('unit');
+
+  // Default selection: focused unit from ?unit=, else first unit.
+  // Keeps the previous accordion's "deep link into a unit" behavior.
+  useEffect(() => {
+    if (units.length === 0) {
       return;
     }
-    const element = document.getElementById(`unit-${focusUnitId}`);
-    element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    setExpandedUnits((prev) => new Set(prev).add(focusUnitId));
+    if (focusUnitId && units.some((unit) => unit.id === focusUnitId)) {
+      setActiveUnitId(focusUnitId);
+      return;
+    }
+    setActiveUnitId((prev) => (prev && units.some((unit) => unit.id === prev) ? prev : units[0].id));
   }, [focusUnitId, units]);
 
-  const handleRedeemUnit = async (unitId: string, code: string): Promise<boolean> => {
+  useEffect(() => {
+    if (!focusUnitId || units.length === 0) {
+      return;
+    }
+    // Defer one frame so the detail panel for the focused unit is mounted.
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(`unit-${focusUnitId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusUnitId, units, activeUnitId]);
+
+  const handleRedeemUnit = async (unitId: string, code: string, useVoucher = false): Promise<boolean> => {
     setRedeemByUnit((prev) => ({ ...prev, [unitId]: { busy: true, error: null } }));
     try {
-      await redeemUnitCode(code);
-      showToast('تم تفعيل الوحدة بنجاح');
+      await redeemUnitCode(code, useVoucher);
+      showToast(useVoucher ? 'تم تفعيل الوحدة مع إعفاء رسوم المنصة' : 'تم تفعيل الوحدة بنجاح');
       await load();
       setRedeemByUnit((prev) => ({ ...prev, [unitId]: { busy: false, error: null } }));
       return true;
@@ -262,8 +300,8 @@ export function StudentCurriculumPage() {
                       {gradeName}
                     </p>
                     {[...unitMap.entries()].map(([unitName, lessons]) => (
-                      <div key={`${gradeName}-${unitName}`} className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                        <div className="px-3 py-2 bg-white/[0.03] border-b border-white/5">
+                      <div key={`${gradeName}-${unitName}`} className="rounded-xl border border-border bg-surface-muted overflow-hidden">
+                        <div className="px-3 py-2 bg-surface border-b border-border-muted">
                           <p className="text-sm font-medium text-foreground">{unitName}</p>
                         </div>
                         <ul className="divide-y divide-border-muted">
@@ -274,17 +312,19 @@ export function StudentCurriculumPage() {
                               <li key={lesson.lesson_id}>
                                 <Link
                                   to={`/student/lessons/${lesson.lesson_id}`}
-                                  className="flex items-center justify-between gap-3 px-3 py-3 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+                                  className="flex min-h-[3.75rem] items-center gap-2.5 px-3 py-3 transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong sm:gap-3"
                                   data-testid={`trial-lesson-${lesson.lesson_id}`}
                                 >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                                      <PlayCircle className="h-4 w-4" />
-                                    </div>
-                                    <span className="text-sm text-foreground truncate">{lesson.lesson_title}</span>
-                                    <Badge variant="info">مجاني</Badge>
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                                    <PlayCircle className="h-4 w-4" />
                                   </div>
-                                  <LessonProgressBadge progress={progressByLesson.get(lesson.lesson_id)} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block break-words text-sm font-bold leading-6 text-foreground">{lesson.lesson_title}</span>
+                                    <Badge variant="info" className="mt-1">مجاني</Badge>
+                                  </span>
+                                  <span className="shrink-0">
+                                    <LessonProgressBadge progress={progressByLesson.get(lesson.lesson_id)} />
+                                  </span>
                                 </Link>
                               </li>
                             ))}
@@ -301,15 +341,26 @@ export function StudentCurriculumPage() {
     );
   }
 
-  const totalLessons = units.reduce((sum, unit) => sum + unit.lessons.length, 0);
-  const completedLessons = units.reduce(
-    (sum, unit) =>
-      sum + unit.lessons.filter((lesson) => progressByLesson.get(lesson.id)?.is_completed).length,
-    0,
-  );
-  const progressPercent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
   const purchasedUnitIds = new Set(purchases.map((purchase) => purchase.unit_id));
   const priceById = new Map(prices.map((price) => [price.unit_id, price]));
+  const isUnitAccessible = (unit: Unit) =>
+    purchasedUnitIds.has(unit.id) || priceById.get(unit.id)?.is_free === true;
+  // Fix #6 — نسبة المنهج على الوحدات المفعلة فقط (مشتراة + مجانية +
+  // تجريبي ظاهر)، لا كل الوحدات المنشورة.
+  const existingLessonIdsForRatio = new Set(units.flatMap((u) => u.lessons.map((l) => l.id)));
+  const visibleTrialForRatio = trialLessons.filter((t) => !existingLessonIdsForRatio.has(t.lesson_id));
+  const accessibleUnits = units.filter((u) => isUnitAccessible(u));
+  const totalLessons =
+    accessibleUnits.reduce((sum, unit) => sum + unit.lessons.length, 0) +
+    visibleTrialForRatio.length;
+  const completedLessons =
+    accessibleUnits.reduce(
+      (sum, unit) =>
+        sum + unit.lessons.filter((lesson) => progressByLesson.get(lesson.id)?.is_completed).length,
+      0,
+    ) +
+    visibleTrialForRatio.filter((t) => progressByLesson.get(t.lesson_id)?.is_completed).length;
+  const progressPercent = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
 
   // trial: deduplicate lessons already present in own-grade units, keep published filter (RPC already does)
   const existingLessonIds = new Set(units.flatMap((u) => u.lessons.map((l) => l.id)));
@@ -324,19 +375,25 @@ export function StudentCurriculumPage() {
     return acc;
   }, new Map<string, Map<string, TrialLessonRow[]>>());
 
-  const toggleUnit = (unitId: string) => {
-    setExpandedUnits((prev) => {
-      const next = new Set(prev);
-      if (next.has(unitId)) {
-        next.delete(unitId);
-      } else {
-        next.add(unitId);
-      }
-      return next;
-    });
+  const voucherGranted = streak?.voucher.status === 'granted';
+  const voucherValidity = voucherValidityLabel(streak?.voucher.expires_at);
+
+  const activeUnit = units.find((unit) => unit.id === activeUnitId) ?? null;
+
+  const unitStats = (unit: UnitWithLessons) => {
+    const done = unit.lessons.filter((lesson) => progressByLesson.get(lesson.id)?.is_completed).length;
+    const total = unit.lessons.length;
+    return { done, total, percent: total > 0 ? Math.round((done / total) * 100) : 0 };
   };
 
-  const isExpanded = (unitId: string) => expandedUnits.has(unitId);
+  // Mobile: after tapping a unit, scroll the detail panel into view
+  // (desktop shows list + detail side by side, no scroll needed).
+  const selectUnitOnMobile = (unitId: string) => {
+    setActiveUnitId(unitId);
+    window.requestAnimationFrame(() => {
+      document.getElementById(`unit-${unitId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  };
 
   return (
     <LayoutShell
@@ -353,7 +410,7 @@ export function StudentCurriculumPage() {
         />
 
         {/* Progress Overview */}
-        <GridCard className="glass-accent-border">
+        <GridCard>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center gap-4">
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
@@ -361,11 +418,11 @@ export function StudentCurriculumPage() {
               </div>
               <div>
                 <h3 className="font-display text-lg font-bold text-foreground">تقدمك الكلي</h3>
-                <p className="text-sm text-foreground-muted">{completedLessons} من {totalLessons} درسًا مكتمل</p>
+                <p className="text-sm text-foreground-muted" data-testid="curriculum-progress-label">{completedLessons} من {totalLessons} درسًا مكتمل</p>
               </div>
             </div>
             <div className="flex items-center gap-4 w-full sm:w-auto">
-              <div className="h-2 flex-1 max-w-xs overflow-hidden rounded-full bg-white/10 shadow-[inset_0_1px_2px_rgba(2,1,10,0.6)]">
+              <div className="h-2 flex-1 max-w-xs overflow-hidden rounded-full bg-surface-muted" data-testid="curriculum-progress-bar">
                 <div
                   className="h-full rounded-full bg-primary transition-[width] duration-500"
                   style={{ width: `${progressPercent}%` }}
@@ -404,8 +461,8 @@ export function StudentCurriculumPage() {
                     {gradeName}
                   </p>
                   {[...unitMap.entries()].map(([unitName, lessons]) => (
-                    <div key={`${gradeName}-${unitName}`} className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
-                      <div className="px-3 py-2 bg-white/[0.03] border-b border-white/5">
+                    <div key={`${gradeName}-${unitName}`} className="rounded-xl border border-border bg-surface-muted overflow-hidden">
+                      <div className="px-3 py-2 bg-surface border-b border-border-muted">
                         <p className="text-sm font-medium text-foreground">{unitName}</p>
                       </div>
                       <ul className="divide-y divide-border-muted">
@@ -418,17 +475,19 @@ export function StudentCurriculumPage() {
                               <li key={lesson.lesson_id}>
                                 <Link
                                   to={`/student/lessons/${lesson.lesson_id}`}
-                                  className="flex items-center justify-between gap-3 px-3 py-3 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+                                  className="flex min-h-[3.75rem] items-center gap-2.5 px-3 py-3 transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong sm:gap-3"
                                   data-testid={`trial-lesson-${lesson.lesson_id}`}
                                 >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                                      <PlayCircle className="h-4 w-4" />
-                                    </div>
-                                    <span className="text-sm text-foreground truncate">{lesson.lesson_title}</span>
-                                    <Badge variant="info">مجاني</Badge>
+                                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                                    <PlayCircle className="h-4 w-4" />
                                   </div>
-                                  <LessonProgressBadge progress={progress} />
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block break-words text-sm font-bold leading-6 text-foreground">{lesson.lesson_title}</span>
+                                    <Badge variant="info" className="mt-1">مجاني</Badge>
+                                  </span>
+                                  <span className="shrink-0">
+                                    <LessonProgressBadge progress={progress} />
+                                  </span>
                                 </Link>
                               </li>
                             );
@@ -450,149 +509,302 @@ export function StudentCurriculumPage() {
             />
           </GridCard>
         ) : (
-          <div className="space-y-4">
-            {units.map((unit) => {
-              const isPurchased = purchasedUnitIds.has(unit.id) || priceById.get(unit.id)?.is_free === true;
-              const price = priceById.get(unit.id);
-              const isFree = price?.is_free === true;
-              const unitLessons = unit.lessons;
-              const unitCompleted = unitLessons.filter((l) => progressByLesson.get(l.id)?.is_completed).length;
-              const unitTotal = unitLessons.length;
-              const unitProgress = unitTotal > 0 ? Math.round((unitCompleted / unitTotal) * 100) : 0;
-              const expanded = isExpanded(unit.id);
-
-              if (!isPurchased) {
-                // Trial lessons must remain accessible even inside a locked unit
-                // and even when the student has zero unit_purchases. Filtering
-                // is by is_trial only — never by has_purchase — so a free
-                // lesson opens via can_access_lesson even cross-grade.
-                const trialLessons = unitLessons.filter((lesson) => lesson.is_trial);
+          <div className="flex flex-col gap-4">
+            {/* Mobile: full-width compact unit list (no horizontal scroll,
+                names + progress stay readable on narrow screens) */}
+            <div
+              className="flex flex-col gap-2 lg:hidden"
+              role="tablist"
+              aria-label="الوحدات"
+            >
+              {units.map((unit) => {
+                const purchased = purchasedUnitIds.has(unit.id) || priceById.get(unit.id)?.is_free === true;
+                const price = priceById.get(unit.id);
+                const isFree = price?.is_free === true;
+                const stats = unitStats(unit);
+                const selected = unit.id === activeUnit?.id;
                 return (
-                  <GridCard key={unit.id}>
-                    <LockedUnitCard
-                      unit={price ?? null}
-                      unitName={unit.name}
-                      gradeName={price?.grade_name}
-                      whatsappNumber={settings?.whatsapp_number ?? null}
-                      whatsappMessage={`${settings?.whatsapp_default_message ?? ''} — وحدة ${unit.name}`}
-                      onRedeem={(code) => handleRedeemUnit(unit.id, code)}
-                      redeemBusy={redeemByUnit[unit.id]?.busy ?? false}
-                      redeemError={redeemByUnit[unit.id]?.error ?? null}
-                    />
-                    {trialLessons.length > 0 ? (
-                      <div className="mt-4 border-t border-white/5 pt-4">
-                        <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-                          <PlayCircle className="h-4 w-4 text-primary" aria-hidden="true" />
-                          درس مجاني متاح بدون تفعيل
-                        </p>
-                        <ul className="divide-y divide-border-muted overflow-hidden rounded-xl border border-white/10 bg-white/[0.02]">
-                          {trialLessons.map((lesson) => {
-                            const progress = progressByLesson.get(lesson.id);
-                            return (
-                              <li key={lesson.id}>
-                                <Link
-                                  to={`/student/lessons/${lesson.id}`}
-                                  className="flex items-center justify-between gap-3 px-3 py-3 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
-                                  data-testid={`curriculum-lesson-${lesson.id}`}
-                                >
-                                  <div className="flex items-center gap-3 min-w-0">
-                                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary">
-                                      <PlayCircle className="h-4 w-4" />
-                                    </div>
-                                    <span className="text-sm text-foreground truncate">{lesson.title}</span>
-                                    <Badge variant="info">مجاني</Badge>
-                                  </div>
-                                  <LessonProgressBadge progress={progress} />
-                                </Link>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      </div>
-                    ) : null}
-                  </GridCard>
-                );
-              }
-
-              return (
-                <GridCard
-                  key={unit.id}
-                  className="overflow-hidden"
-                >
                   <button
+                    key={unit.id}
                     type="button"
-                    id={`unit-${unit.id}`}
-                    onClick={() => toggleUnit(unit.id)}
-                    className="w-full flex items-center justify-between gap-3 p-4 -mx-4 -my-4 rounded-lg hover:bg-white/3 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
-                    aria-expanded={expanded}
+                    role="tab"
+                    aria-selected={selected}
+                    data-testid={`unit-chip-${unit.id}`}
+                    onClick={() => selectUnitOnMobile(unit.id)}
+                    className={cn(
+                      'flex min-h-[4rem] items-center gap-3 rounded-2xl border p-3 text-start transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
+                      selected
+                        ? 'border-primary-strong bg-primary-soft'
+                        : 'border-border bg-surface active:bg-surface-muted',
+                    )}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
-                        <PackageOpen className="h-5 w-5" />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-display text-lg font-bold text-foreground truncate">{unit.name}</h3>
-                          {isFree ? <Badge variant="success" className="text-xs">مجاني</Badge> : null}
-                        </div>
-                        <div className="flex items-center gap-2 mt-1 text-sm text-foreground-muted">
-                          <span>{unitCompleted} / {unitTotal} دروس</span>
-                          <span className="text-primary">{unitProgress}%</span>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0">
-                      <div className="h-2 w-32 overflow-hidden rounded-full bg-white/10">
-                        <div
-                          className="h-full rounded-full bg-primary"
-                          style={{ width: `${unitProgress}%` }}
-                        />
-                      </div>
-                      <ChevronDown
-                        className={cn(
-                          'h-5 w-5 text-foreground-muted transition-transform',
-                          expanded && 'rotate-180'
-                        )}
-                        aria-hidden="true"
-                      />
-                    </div>
+                    <span
+                      aria-hidden="true"
+                      className={cn(
+                        'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+                        purchased ? 'bg-primary-soft text-primary' : 'bg-surface-muted text-foreground-subtle',
+                      )}
+                    >
+                      {purchased ? <PackageOpen className="h-5 w-5" /> : <Lock className="h-4 w-4" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-black text-foreground">
+                        {unit.name}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] text-foreground-muted">
+                        {purchased ? `${stats.done}/${stats.total} دروس · ${stats.percent}٪` : 'مقفولة — تحتاج تفعيل'}
+                        {isFree ? ' · مجانية' : ''}
+                      </span>
+                      {purchased && stats.total > 0 ? (
+                        <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-surface-muted" aria-hidden="true">
+                          <span className="block h-full rounded-full bg-primary" style={{ width: `${stats.percent}%` }} />
+                        </span>
+                      ) : null}
+                    </span>
+                    {selected ? (
+                      <span aria-hidden="true" className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+                        <Check className="h-3.5 w-3.5" />
+                      </span>
+                    ) : null}
                   </button>
+                );
+              })}
+            </div>
 
-                  {expanded && (
-                    <div className="animate-slide-in-top px-4 pb-4 border-t border-white/5">
-                      <ul className="divide-y divide-border-muted">
-                        {unitLessons.map((lesson) => {
-                          const progress = progressByLesson.get(lesson.id);
-                          return (
-                            <li key={lesson.id}>
-                              <Link
-                                to={`/student/lessons/${lesson.id}`}
-                                className="flex items-center justify-between gap-3 rounded-lg px-1 py-3 transition-colors hover:bg-white/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
-                                data-testid={`curriculum-lesson-${lesson.id}`}
-                              >
-                                <div className="flex items-center gap-3 min-w-0">
-                                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/5 text-foreground-muted">
-                                    <PlayCircle className="h-4 w-4" />
-                                  </div>
-                                  <span className="text-sm text-foreground truncate">{lesson.title}</span>
-                                  {lesson.is_trial ? (
-                                    <Badge variant="info">مجاني</Badge>
-                                  ) : null}
-                                </div>
-                                <LessonProgressBadge progress={progress} />
-                              </Link>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  )}
-                </GridCard>
-              );
-            })}
+            <div className="grid gap-3 lg:gap-4 lg:grid-cols-[300px_1fr] lg:items-start">
+              {/* Desktop: unit list sidebar */}
+              <nav aria-label="قائمة الوحدات" className="hidden lg:flex lg:flex-col lg:gap-2">
+                <div role="tablist" aria-label="الوحدات" className="flex flex-col gap-2">
+                  {units.map((unit) => {
+                    const purchased = purchasedUnitIds.has(unit.id) || priceById.get(unit.id)?.is_free === true;
+                    const price = priceById.get(unit.id);
+                    const isFree = price?.is_free === true;
+                    const stats = unitStats(unit);
+                    const selected = unit.id === activeUnit?.id;
+                    return (
+                      <button
+                        key={unit.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={selected}
+                        data-testid={`unit-tab-${unit.id}`}
+                        onClick={() => setActiveUnitId(unit.id)}
+                        className={cn(
+                          'flex items-center gap-3 rounded-2xl border p-3.5 text-start transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong',
+                          selected
+                            ? 'border-primary-strong bg-primary-soft'
+                            : 'border-border bg-surface hover:border-primary/40',
+                        )}
+                      >
+                        <span
+                          aria-hidden="true"
+                          className={cn(
+                            'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl',
+                            purchased ? 'bg-primary-soft text-primary' : 'bg-surface-muted text-foreground-subtle',
+                          )}
+                        >
+                          {purchased ? <PackageOpen className="h-5 w-5" /> : <Lock className="h-4 w-4" />}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-black text-foreground">
+                            {unit.name}
+                          </span>
+                          <span className="mt-0.5 block text-[11px] text-foreground-muted">
+                            {purchased ? `${stats.done}/${stats.total} دروس · ${stats.percent}٪` : 'مقفولة — تحتاج تفعيل'}
+                            {isFree ? ' · مجانية' : ''}
+                          </span>
+                          {purchased && stats.total > 0 ? (
+                            <span className="mt-1.5 block h-1.5 overflow-hidden rounded-full bg-surface-muted" aria-hidden="true">
+                              <span className="block h-full rounded-full bg-primary" style={{ width: `${stats.percent}%` }} />
+                            </span>
+                          ) : null}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="rounded-2xl border border-dashed border-border bg-surface-muted/50 p-4 text-center text-[11px] leading-5 text-foreground-subtle">
+                  فعّل وحدة جديدة بكود من الأستاذ — تظهر هنا فورًا
+                </div>
+              </nav>
+
+              {/* Detail panel */}
+              {activeUnit ? (
+                <UnitDetailPanel
+                  key={activeUnit.id}
+                  unit={activeUnit}
+                  purchasedUnitIds={purchasedUnitIds}
+                  priceById={priceById}
+                  settings={settings}
+                  progressByLesson={progressByLesson}
+                  redeemState={redeemByUnit[activeUnit.id]}
+                  onRedeem={(code, useVoucher) => handleRedeemUnit(activeUnit.id, code, useVoucher)}
+                  voucherAvailable={voucherGranted}
+                  voucherValidity={voucherValidity}
+                />
+              ) : null}
+            </div>
           </div>
         )}
       </div>
     </LayoutShell>
   );
 }
+
+function UnitDetailPanel({
+  unit,
+  purchasedUnitIds,
+  priceById,
+  settings,
+  progressByLesson,
+  redeemState,
+  onRedeem,
+  voucherAvailable,
+  voucherValidity,
+}: {
+  unit: UnitWithLessons;
+  purchasedUnitIds: Set<string>;
+  priceById: Map<string, PublicUnitPrice>;
+  settings: PublicSettings | null;
+  progressByLesson: Map<string, Progress>;
+  redeemState: { busy: boolean; error: string | null } | undefined;
+  onRedeem: (code: string, useVoucher?: boolean) => Promise<boolean>;
+  voucherAvailable: boolean;
+  voucherValidity: string | null;
+}) {
+  const isPurchased = purchasedUnitIds.has(unit.id) || priceById.get(unit.id)?.is_free === true;
+  const price = priceById.get(unit.id);
+  const isFree = price?.is_free === true;
+  const unitLessons = unit.lessons;
+  const unitCompleted = unitLessons.filter((l) => progressByLesson.get(l.id)?.is_completed).length;
+  const unitTotal = unitLessons.length;
+  const unitProgress = unitTotal > 0 ? Math.round((unitCompleted / unitTotal) * 100) : 0;
+
+  if (!isPurchased) {
+    // Trial lessons must remain accessible even inside a locked unit
+    // and even when the student has zero unit_purchases. Filtering
+    // is by is_trial only — never by has_purchase — so a free
+    // lesson opens via can_access_lesson even cross-grade.
+    const trialLessons = unitLessons.filter((lesson) => lesson.is_trial);
+    return (
+      <section aria-label={unit.name} data-testid={`unit-detail-${unit.id}`} id={`unit-${unit.id}`} className="scroll-mt-6">
+        <GridCard>
+          <h3 className="sr-only">{unit.name}</h3>
+          <LockedUnitCard
+            unit={price ?? null}
+            unitName={unit.name}
+            gradeName={price?.grade_name}
+            whatsappNumber={settings?.whatsapp_number ?? null}
+            whatsappMessage={`${settings?.whatsapp_default_message ?? ''} — وحدة ${unit.name}`}
+            onRedeem={onRedeem}
+            redeemBusy={redeemState?.busy ?? false}
+            redeemError={redeemState?.error ?? null}
+            voucher={{
+              available: voucherAvailable,
+              waivedFee: price?.platform_fee ?? null,
+              validityLabel: voucherValidity,
+            }}
+            voucherTestId={`voucher-redeem-${unit.id}`}
+          />
+          {trialLessons.length > 0 ? (
+            <div className="mt-4 border-t border-border-muted pt-4">
+              <p className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                <PlayCircle className="h-4 w-4 text-primary" aria-hidden="true" />
+                درس مجاني متاح بدون تفعيل
+              </p>
+              <ul className="divide-y divide-border-muted overflow-hidden rounded-xl border border-border bg-surface-muted">
+                {trialLessons.map((lesson) => {
+                  const progress = progressByLesson.get(lesson.id);
+                  return (
+                    <li key={lesson.id}>
+                      <Link
+                        to={`/student/lessons/${lesson.id}`}
+                        className="flex min-h-[3.75rem] items-center gap-2.5 px-3 py-3 transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong sm:gap-3"
+                        data-testid={`curriculum-lesson-${lesson.id}`}
+                      >
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+                          <PlayCircle className="h-4 w-4" />
+                        </div>
+                        <span className="min-w-0 flex-1">
+                          <span className="block break-words text-sm font-bold leading-6 text-foreground">{lesson.title}</span>
+                          <Badge variant="info" className="mt-1">مجاني</Badge>
+                        </span>
+                        <span className="shrink-0">
+                          <LessonProgressBadge progress={progress} />
+                        </span>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </GridCard>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      aria-label={unit.name}
+      data-testid={`unit-detail-${unit.id}`}
+      id={`unit-${unit.id}`}
+      className="scroll-mt-6 overflow-hidden rounded-2xl border border-border bg-surface"
+    >
+      <div className="border-b border-border-muted p-4 sm:p-5">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
+            <PackageOpen className="h-5 w-5" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="font-display min-w-0 flex-1 break-words text-lg font-bold leading-8 text-foreground">{unit.name}</h3>
+              {isFree ? <Badge variant="success" className="shrink-0 text-xs">مجاني</Badge> : null}
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-sm text-foreground-muted">
+              <span>{unitCompleted} / {unitTotal} دروس</span>
+              <span className="font-bold tabular-nums text-primary">{unitProgress}%</span>
+            </div>
+          </div>
+        </div>
+        {unitTotal > 0 ? (
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface-muted" aria-hidden="true">
+            <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${unitProgress}%` }} />
+          </div>
+        ) : null}
+      </div>
+      {unitLessons.length === 0 ? (
+        <p className="px-4 py-8 text-center text-sm text-foreground-subtle">لا توجد دروس منشورة في هذه الوحدة بعد.</p>
+      ) : (
+        <ul className="divide-y divide-border-muted">
+          {unitLessons.map((lesson) => {
+            const progress = progressByLesson.get(lesson.id);
+            return (
+              <li key={lesson.id}>
+                <Link
+                  to={`/student/lessons/${lesson.id}`}
+                  className="flex min-h-[3.75rem] items-center gap-2.5 px-3 py-3 transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong sm:gap-3 sm:px-4"
+                  data-testid={`curriculum-lesson-${lesson.id}`}
+                >
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-surface-muted text-foreground-muted">
+                    <PlayCircle className="h-4 w-4" />
+                  </div>
+                  <span className="min-w-0 flex-1">
+                    <span className="block break-words text-sm font-bold leading-6 text-foreground">{lesson.title}</span>
+                    {lesson.is_trial ? (
+                      <Badge variant="info" className="mt-1">مجاني</Badge>
+                    ) : null}
+                  </span>
+                  <span className="shrink-0">
+                    <LessonProgressBadge progress={progress} />
+                  </span>
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+

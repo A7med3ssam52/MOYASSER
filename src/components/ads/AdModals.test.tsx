@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react';
+﻿import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { AD_DESIGNS, AdModalShell, DEFAULT_AD_CONTENT, type AdVariant } from './index';
@@ -113,3 +113,4 @@ describe('AD_DESIGNS — الـ20 تصميم', () => {
     unmount();
   });
 });
+

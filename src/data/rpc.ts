@@ -1,6 +1,7 @@
-import { getSupabaseClient, supabasePublishableKey, supabaseUrl } from '../lib/supabase';
+﻿import { getSupabaseClient, supabasePublishableKey, supabaseUrl } from '../lib/supabase';
 
 import type {
+  AdminSuggestionRow,
   AppNotification,
   AuditFilters,
   AuditLogRow,
@@ -9,6 +10,10 @@ import type {
   ExamAnswer,
   ExamAttempt,
   ExamQuestion,
+  GeneralExamLeaderboardRow,
+  GeneralExamReviewRow,
+  GeneralExamRow,
+  GeneralExamStatus,
   Grade,
   Lesson,
   LessonAccessInfo,
@@ -17,12 +22,17 @@ import type {
   LessonComment,
   LessonPdf,
   LessonVideo,
+  MyStreak,
   PdfAccessResponse,
+  PlatformSuggestion,
   PlaybackResponse,
   Profile,
   Progress,
   PublicSettings,
   PublicUnitPrice,
+  StreakBoardRow,
+  SuggestionKind,
+  SuggestionStatus,
   Unit,
   UnitCode,
   UnitCodeWithUnit,
@@ -997,18 +1007,43 @@ export async function upsertProgress(
   return data as Progress;
 }
 
+/**
+ * سياسة الإكمال الموحدة (unified completion policy):
+ * - مكتمل = is_completed=true.
+ * - auto: upsert_progress عند percent>=90 (completed_by='auto').
+ * - manual: زر التبديل (completed_by='manual').
+ * - exam: تسليم امتحان ناجح يستدعي toggle(..., 'exam').
+ * - PDF/سبورة: engagement فقط (upsert بحد أدنى 10%) ولا يُكمل تلقائياً.
+ * - الفك: يخفض percent إلى <=89 ويمسح completed_at حتى لا يعيد
+ *   المسار التلقائي الإكمال فوراً.
+ */
+export type LessonCompletionSource = 'manual' | 'exam';
+
 export async function toggleLessonCompleted(
   lessonId: string,
   completed: boolean,
+  source: LessonCompletionSource = 'manual',
 ): Promise<Progress> {
   const { data, error } = await getSupabaseClient().rpc('toggle_lesson_completed', {
     p_lesson_id: lessonId,
     p_completed: completed,
+    p_source: source,
   });
   if (error) {
     throw error;
   }
   return data as Progress;
+}
+
+/** Broadcast so curriculum/dashboard/units summaries refresh after any progress write. */
+export function broadcastProgressUpdated(lessonId: string): void {
+  try {
+    window.dispatchEvent(
+      new CustomEvent('lesson-progress-updated', { detail: { lessonId } }),
+    );
+  } catch {
+    // non-DOM environments (tests) — ignore
+  }
 }
 
 export async function getMyProgress(lessonId: string): Promise<Progress | null> {
@@ -1200,14 +1235,47 @@ async function fetchGradeNames(gradeIds: string[]): Promise<Map<string, string>>
   return new Map((data ?? []).map((grade) => [grade.id, grade.name]));
 }
 
-export async function redeemUnitCode(code: string): Promise<UnitPurchase> {
-  const { data, error } = await getSupabaseClient().rpc('redeem_unit_code', {
-    p_code: code,
-  });
+export async function redeemUnitCode(code: string, useVoucher = false): Promise<UnitPurchase> {
+  const { data, error } = await getSupabaseClient().rpc(
+    'redeem_unit_code',
+    // Keep the legacy single-arg shape when no voucher is used so the
+    // server default (false) applies and existing callers are untouched.
+    useVoucher ? { p_code: code, p_use_voucher: true } : { p_code: code },
+  );
   if (error) {
     throw error;
   }
   return data as UnitPurchase;
+}
+
+/**
+ * Gentle streak (0085): current days, Cairo week, freeze + voucher state.
+ * Auto-claims the once-ever 30-day voucher server-side (with notification).
+ */
+export async function getMyStreak(): Promise<MyStreak> {
+  const { data, error } = await getSupabaseClient().rpc('get_my_streak');
+  if (error) {
+    throw error;
+  }
+  return data as MyStreak;
+}
+
+/** Weekly freeze: covers the most recent missed day of the current week. Returns the covered date. */
+export async function useStreakFreeze(): Promise<string> {
+  const { data, error } = await getSupabaseClient().rpc('use_streak_freeze');
+  if (error) {
+    throw error;
+  }
+  return data as string;
+}
+
+/** Staff-only streak board (admin/mr_moyasser/teacher). */
+export async function listStudentStreaks(): Promise<StreakBoardRow[]> {
+  const { data, error } = await getSupabaseClient().rpc('list_student_streaks');
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as StreakBoardRow[];
 }
 
 export async function getMyUnitPurchases(): Promise<UnitPurchaseWithUnit[]> {
@@ -1857,12 +1925,19 @@ export async function updateExamQuestion(input: UpdateExamQuestionInput): Promis
 }
 
 // ---------------------------------------------------------------------
-// Exam image helpers (Phase 12)
-// ---------------------------------------------------------------------
+// Exam image helpers (Phase 12, Cloudinary)
+/** Prefix of Cloudinary exam pointers: cloudinary:exam-images/<exam>/<uuid>.<ext>:<version>. */
+export const CLOUDINARY_EXAM_PREFIX = 'cloudinary:exam-images/';
+
 export interface ExamImageUploadSession {
-  uploadUrl: string;
-  storage_path: string;
+  upload_url: string;
+  cloud_name: string;
+  api_key: string;
+  timestamp: string;
+  signature: string;
+  public_id: string;
   exam_id: string;
+  image_id: string;
 }
 
 export async function uploadExamImage(input: {
@@ -1880,29 +1955,145 @@ export async function uploadExamImage(input: {
   });
 }
 
-function examImageContentType(file: File): string {
-  const dot = file.name.lastIndexOf('.');
-  const ext = dot >= 0 ? file.name.slice(dot + 1).toLowerCase() : '';
-  if (ext === 'png') return 'image/png';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  return file.type || 'application/octet-stream';
+/** True for Cloudinary exam pointers (cloudinary:exam-images/...). */
+export function isCloudinaryExamImagePath(path: string | null | undefined): boolean {
+  return typeof path === 'string' && path.startsWith(CLOUDINARY_EXAM_PREFIX);
 }
 
-export async function uploadExamImageBytes(uploadUrl: string, file: File): Promise<void> {
+export interface ExamImagePointer {
+  examId: string;
+  imageId: string;
+  format: string;
+  version: string;
+}
+
+/**
+ * Parses a Cloudinary exam pointer. Returns null for anything else
+ * (including legacy Supabase paths). Mirrors parseExamImagePointer()
+ * in supabase/functions/_shared/cloudinary.ts.
+ */
+export function parseExamImagePointer(path: string): ExamImagePointer | null {
+  if (!isCloudinaryExamImagePath(path)) {
+    return null;
+  }
+  const rest = path.slice(CLOUDINARY_EXAM_PREFIX.length);
+  const versionSep = rest.lastIndexOf(':');
+  if (versionSep < 0) {
+    return null;
+  }
+  const version = rest.slice(versionSep + 1);
+  const head = rest.slice(0, versionSep);
+  const slash = head.indexOf('/');
+  if (slash < 0) {
+    return null;
+  }
+  const examId = head.slice(0, slash);
+  const file = head.slice(slash + 1);
+  const dot = file.lastIndexOf('.');
+  if (dot < 0) {
+    return null;
+  }
+  const imageId = file.slice(0, dot);
+  const format = file.slice(dot + 1);
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRe.test(examId) || !uuidRe.test(imageId)) {
+    return null;
+  }
+  if (format !== 'jpg' && format !== 'jpeg' && format !== 'png' && format !== 'webp') {
+    return null;
+  }
+  if (!/^[0-9]+$/.test(version)) {
+    return null;
+  }
+  return { examId, imageId, format, version };
+}
+
+/**
+ * Uploads an exam question image to Cloudinary (type=authenticated,
+ * server-minted public_id) and returns the pointer to store in
+ * prompt_image_path / choice_image_paths.
+ */
+export async function uploadExamImageToCloudinary(examId: string, file: File): Promise<string> {
+  if (!cloudinaryCloudName) {
+    throw codeError('misconfigured');
+  }
+  const grant = await uploadExamImage({ examId, fileName: file.name, fileSize: file.size });
+  if (grant.exam_id !== examId || !grant.public_id || !grant.image_id) {
+    throw codeError('function_error');
+  }
+  const form = new FormData();
+  form.append('file', file);
+  form.append('api_key', grant.api_key);
+  form.append('timestamp', grant.timestamp);
+  form.append('public_id', grant.public_id);
+  form.append('type', 'authenticated');
+  form.append('overwrite', 'true');
+  form.append('invalidate', 'true');
+  form.append('signature', grant.signature);
   let response: Response;
   try {
-    response = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: { 'Content-Type': examImageContentType(file) },
-      body: file,
-    });
+    response = await fetch(grant.upload_url, { method: 'POST', body: form });
   } catch {
     throw codeError('network_error');
   }
   if (!response.ok) {
-    throw codeError(response.status >= 500 || response.status === 429 ? 'internal_error' : 'exam_image_upload_failed');
+    throw codeError('function_error');
   }
+  let payload: { format?: unknown; version?: unknown };
+  try {
+    payload = (await response.json()) as { format?: unknown; version?: unknown };
+  } catch {
+    throw codeError('function_error');
+  }
+  const version = String(payload.version ?? '');
+  if (!/^[0-9]+$/.test(version)) {
+    throw codeError('function_error');
+  }
+  const rawFormat = String(payload.format ?? '').trim().toLowerCase();
+  const format =
+    rawFormat === 'png' ? 'png' : rawFormat === 'webp' ? 'webp' : 'jpg';
+  return `${CLOUDINARY_EXAM_PREFIX}${examId}/${grant.image_id}.${format}:${version}`;
+}
+
+/**
+ * Best-effort destroy of a Cloudinary exam image (staff flows call this
+ * when an image is removed/replaced or its question deleted). Never
+ * throws — the question DML stays authoritative.
+ */
+export async function deleteExamImage(path: string | null | undefined): Promise<void> {
+  if (!isCloudinaryExamImagePath(path)) {
+    return;
+  }
+  try {
+    await invokeFunction('exam-image-delete', { method: 'POST', body: { path } });
+  } catch {
+    /* orphaned asset is harmless — never block the question save */
+  }
+}
+
+/**
+ * Best-effort destroy of exam image pointers that a question save
+ * stopped referencing (replaced or removed). `undefined` means "field
+ * untouched" and resolves to the previous value. Never throws.
+ */
+export async function cleanupReplacedExamImages(
+  prevPrompt: string | null | undefined,
+  prevChoices: (string | null)[],
+  nextPrompt: string | null | undefined,
+  nextChoices: (string | null)[] | null | undefined,
+): Promise<void> {
+  const finalPrompt = nextPrompt !== undefined ? nextPrompt : (prevPrompt ?? null);
+  const finalChoices = nextChoices !== undefined ? (nextChoices ?? []) : prevChoices;
+  const obsolete = new Set<string>();
+  if (prevPrompt && prevPrompt !== finalPrompt) {
+    obsolete.add(prevPrompt);
+  }
+  for (const path of prevChoices) {
+    if (path && !finalChoices.includes(path)) {
+      obsolete.add(path);
+    }
+  }
+  await Promise.all([...obsolete].map((path) => deleteExamImage(path)));
 }
 
 export type ExamQuestionImageUrls = {
@@ -1953,6 +2144,145 @@ export async function listAttemptAnswers(attemptId: string): Promise<ExamAnswer[
     throw error;
   }
   return (data ?? []) as ExamAnswer[];
+}
+
+// ---------------------------------------------------------------------
+// General (standalone grade-level) exams — 0080
+// ---------------------------------------------------------------------
+
+export async function listGeneralExams(gradeId?: string | null): Promise<GeneralExamRow[]> {
+  const { data, error } = await getSupabaseClient().rpc('list_general_exams', {
+    p_grade_id: gradeId ?? null,
+  });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as GeneralExamRow[];
+}
+
+export interface CreateGeneralExamInput {
+  gradeId: string;
+  title: string;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  durationMinutes?: number | null;
+  passingScore?: number;
+  showLeaderboard?: boolean;
+}
+
+export async function createGeneralExam(input: CreateGeneralExamInput): Promise<string> {
+  const { data, error } = await getSupabaseClient().rpc('create_general_exam', {
+    p_grade_id: input.gradeId,
+    p_title: input.title,
+    p_starts_at: input.startsAt ?? null,
+    p_ends_at: input.endsAt ?? null,
+    p_duration_minutes: input.durationMinutes ?? null,
+    p_passing_score: input.passingScore ?? 50,
+    p_show_leaderboard: input.showLeaderboard ?? true,
+  });
+  if (error) {
+    throw error;
+  }
+  return data as string;
+}
+
+export interface UpdateGeneralExamInput {
+  examId: string;
+  title?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  durationMinutes?: number | null;
+  passingScore?: number | null;
+  showLeaderboard?: boolean | null;
+  status?: Extract<GeneralExamStatus, 'draft' | 'archived'> | null;
+}
+
+export async function updateGeneralExam(input: UpdateGeneralExamInput): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('update_general_exam', {
+    p_exam_id: input.examId,
+    p_title: input.title ?? null,
+    p_starts_at: input.startsAt ?? null,
+    p_ends_at: input.endsAt ?? null,
+    p_duration_minutes: input.durationMinutes ?? null,
+    p_passing_score: input.passingScore ?? null,
+    p_show_leaderboard: input.showLeaderboard ?? null,
+    p_status: input.status ?? null,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+export async function publishGeneralExam(examId: string): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('publish_general_exam', {
+    p_exam_id: examId,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+export async function startGeneralExamAttempt(examId: string): Promise<ExamAttempt> {
+  const { data, error } = await getSupabaseClient().rpc('start_general_exam_attempt', {
+    p_exam_id: examId,
+  });
+  if (error) {
+    throw error;
+  }
+  return data as ExamAttempt;
+}
+
+export async function submitGeneralExam(
+  examId: string,
+  answers: ExamAnswerInput[],
+): Promise<ExamAttempt> {
+  const { data, error } = await getSupabaseClient().rpc('submit_general_exam_attempt', {
+    p_exam_id: examId,
+    p_answers: answers.map((answer) => ({
+      question_id: answer.questionId,
+      choice_index: answer.choiceIndex ?? null,
+      answer_text: answer.answerText ?? null,
+    })),
+  });
+  if (error) {
+    throw error;
+  }
+  return data as ExamAttempt;
+}
+
+export async function getGeneralExamLeaderboard(
+  examId: string,
+): Promise<GeneralExamLeaderboardRow[]> {
+  const { data, error } = await getSupabaseClient().rpc('get_general_exam_leaderboard', {
+    p_exam_id: examId,
+  });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as GeneralExamLeaderboardRow[];
+}
+
+export async function getGeneralExamReview(examId: string): Promise<GeneralExamReviewRow[]> {
+  const { data, error } = await getSupabaseClient().rpc('get_general_exam_review', {
+    p_exam_id: examId,
+  });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as GeneralExamReviewRow[];
+}
+
+export async function resetGeneralExamAttempt(
+  examId: string,
+  studentId: string,
+): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('reset_general_exam_attempt', {
+    p_exam_id: examId,
+    p_student_id: studentId,
+  });
+  if (error) {
+    throw error;
+  }
 }
 
 export async function getProfileName(userId: string): Promise<string> {
@@ -2090,3 +2420,593 @@ export async function getPresenceDailyCounts(input: {
   }
   return (data ?? []) as import('../types/database').PresenceDailyCount[];
 }
+
+// ---------------------------------------------------------------------
+// Suggestions inbox (0075) — student submit/history + admin workflow
+// ---------------------------------------------------------------------
+export async function submitSuggestion(
+  kind: SuggestionKind,
+  title: string,
+  body: string,
+): Promise<PlatformSuggestion> {
+  const { data, error } = await getSupabaseClient().rpc('submit_suggestion', {
+    p_kind: kind,
+    p_title: title,
+    p_body: body,
+  });
+  if (error) {
+    throw error;
+  }
+  return data as PlatformSuggestion;
+}
+
+export async function attachSuggestionImage(
+  suggestionId: string,
+  path: string,
+): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('attach_suggestion_image', {
+    p_suggestion_id: suggestionId,
+    p_path: path,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+export async function listMySuggestions(): Promise<PlatformSuggestion[]> {
+  const { data, error } = await getSupabaseClient().rpc('list_my_suggestions');
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as PlatformSuggestion[];
+}
+
+export async function listSuggestions(
+  filters: { kind?: SuggestionKind | null; status?: SuggestionStatus | null; limit?: number; offset?: number } = {},
+): Promise<AdminSuggestionRow[]> {
+  const { data, error } = await getSupabaseClient().rpc('list_suggestions', {
+    p_kind: filters.kind ?? null,
+    p_status: filters.status ?? null,
+    p_limit: filters.limit ?? 50,
+    p_offset: filters.offset ?? 0,
+  });
+  if (error) {
+    throw error;
+  }
+  return (data ?? []) as AdminSuggestionRow[];
+}
+
+export async function updateSuggestionStatus(
+  suggestionId: string,
+  status: SuggestionStatus,
+): Promise<PlatformSuggestion> {
+  const { data, error } = await getSupabaseClient().rpc('update_suggestion_status', {
+    p_suggestion_id: suggestionId,
+    p_status: status,
+  });
+  if (error) {
+    throw error;
+  }
+  return data as PlatformSuggestion;
+}
+
+export async function deleteSuggestion(suggestionId: string): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('delete_suggestion', {
+    p_suggestion_id: suggestionId,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+export interface UnreadSuggestions {
+  unreadCount: number;
+  lastSeenAt: string | null;
+}
+
+/** Admin-only unread badge reader (0079 seen-watermark). */
+export async function getUnreadSuggestionsCount(): Promise<UnreadSuggestions> {
+  const { data, error } = await getSupabaseClient().rpc('get_unread_suggestions_count');
+  if (error) {
+    throw error;
+  }
+  const row = (data as Array<{ unread_count: number; last_seen_at: string | null }>)?.[0];
+  return { unreadCount: row?.unread_count ?? 0, lastSeenAt: row?.last_seen_at ?? null };
+}
+
+/** Admin-only: advances the inbox watermark to now; returns newly-marked count. */
+export async function markSuggestionsSeen(): Promise<number> {
+  const { data, error } = await getSupabaseClient().rpc('mark_suggestions_seen');
+  if (error) {
+    throw error;
+  }
+  return (data as number) ?? 0;
+}
+
+/** Admin-only app_settings writer (0007 set_app_setting; admin may write any key). */
+export async function setAppSetting(key: string, value: unknown): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('set_app_setting', {
+    p_key: key,
+    p_value: value as never,
+  });
+  if (error) {
+    throw error;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Suggestion image helpers (Phase 13, Cloudinary — 0091 cutover)
+/** Prefix of Cloudinary suggestion pointers: cloudinary:suggestion-images/<sug>/<uuid>.<ext>:<version>. */
+export const CLOUDINARY_SUGGESTION_PREFIX = 'cloudinary:suggestion-images/';
+
+const SUGGESTION_SIGNED_URL_TTL_SECONDS = 3600;
+
+/** In-memory cache of suggestion signed URLs (path -> { url, expiresAt }). */
+const suggestionUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/** In-flight signed URL requests (path -> promise) so concurrent thumbs never double-fetch. */
+const suggestionUrlPending = new Map<string, Promise<string | null>>();
+
+export function invalidateSuggestionUrl(path?: string | null): void {
+  if (path) {
+    suggestionUrlCache.delete(path);
+    suggestionUrlPending.delete(path);
+  } else {
+    suggestionUrlCache.clear();
+    suggestionUrlPending.clear();
+  }
+}
+
+/** True for Cloudinary suggestion pointers (cloudinary:suggestion-images/...). */
+export function isCloudinarySuggestionImagePath(path: string | null | undefined): boolean {
+  return typeof path === 'string' && path.startsWith(CLOUDINARY_SUGGESTION_PREFIX);
+}
+
+export interface SuggestionImagePointer {
+  suggestionId: string;
+  imageId: string;
+  format: string;
+  version: string;
+}
+
+/**
+ * Parses a Cloudinary suggestion pointer. Returns null for anything else
+ * (including legacy Supabase paths). Mirrors parseSuggestionImagePointer()
+ * in supabase/functions/_shared/cloudinary.ts.
+ */
+export function parseSuggestionImagePointer(path: string): SuggestionImagePointer | null {
+  if (!isCloudinarySuggestionImagePath(path)) {
+    return null;
+  }
+  const rest = path.slice(CLOUDINARY_SUGGESTION_PREFIX.length);
+  const versionSep = rest.lastIndexOf(':');
+  if (versionSep < 0) {
+    return null;
+  }
+  const version = rest.slice(versionSep + 1);
+  const head = rest.slice(0, versionSep);
+  const slash = head.indexOf('/');
+  if (slash < 0) {
+    return null;
+  }
+  const suggestionId = head.slice(0, slash);
+  const file = head.slice(slash + 1);
+  const dot = file.lastIndexOf('.');
+  if (dot < 0) {
+    return null;
+  }
+  const imageId = file.slice(0, dot);
+  const format = file.slice(dot + 1);
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRe.test(suggestionId) || !uuidRe.test(imageId)) {
+    return null;
+  }
+  if (format !== 'jpg' && format !== 'jpeg' && format !== 'png' && format !== 'webp') {
+    return null;
+  }
+  if (!/^[0-9]+$/.test(version)) {
+    return null;
+  }
+  return { suggestionId, imageId, format, version };
+}
+
+export interface SuggestionImageUploadSession {
+  upload_url: string;
+  cloud_name: string;
+  api_key: string;
+  timestamp: string;
+  signature: string;
+  public_id: string;
+  suggestion_id: string;
+  image_id: string;
+}
+
+export async function uploadSuggestionImageSession(input: {
+  suggestionId: string;
+  fileName: string;
+  fileSize?: number;
+}): Promise<SuggestionImageUploadSession> {
+  return invokeFunction<SuggestionImageUploadSession>('upload-suggestion-image', {
+    method: 'POST',
+    body: {
+      suggestion_id: input.suggestionId,
+      file_name: input.fileName,
+      ...(input.fileSize !== undefined ? { file_size: input.fileSize } : {}),
+    },
+  });
+}
+
+/** Normalizes a Cloudinary upload-response format to the allow-listed set. */
+function normalizeSuggestionFormat(format: string, fallbackMime: string): string {
+  const normalized = format.trim().toLowerCase();
+  if (normalized === 'png') return 'png';
+  if (normalized === 'webp') return 'webp';
+  if (normalized === 'jpeg') return 'jpeg';
+  if (normalized === 'jpg') return 'jpg';
+  if (fallbackMime === 'image/png') return 'png';
+  if (fallbackMime === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+/**
+ * Uploads a (compressed) suggestion image to Cloudinary
+ * (type=authenticated, server-minted public_id) and returns the pointer
+ * to bind via attachSuggestionImage(). The caller passes the compressed
+ * blob plus the ORIGINAL file name/mime for the grant + format fallback.
+ */
+export async function uploadSuggestionImageToCloudinary(
+  suggestionId: string,
+  blob: Blob,
+  fileName: string,
+  mimeType = 'image/jpeg',
+): Promise<string> {
+  const grant = await uploadSuggestionImageSession({
+    suggestionId,
+    fileName,
+    fileSize: typeof blob.size === 'number' ? blob.size : undefined,
+  });
+  if (grant.suggestion_id !== suggestionId || !grant.public_id || !grant.image_id) {
+    throw codeError('function_error');
+  }
+  const form = new FormData();
+  form.append('file', blob, fileName);
+  form.append('api_key', grant.api_key);
+  form.append('timestamp', grant.timestamp);
+  form.append('public_id', grant.public_id);
+  form.append('type', 'authenticated');
+  form.append('overwrite', 'true');
+  form.append('invalidate', 'true');
+  form.append('signature', grant.signature);
+  let response: Response;
+  try {
+    response = await fetch(grant.upload_url, { method: 'POST', body: form });
+  } catch {
+    throw codeError('network_error');
+  }
+  if (!response.ok) {
+    throw codeError('function_error');
+  }
+  let payload: { format?: unknown; version?: unknown };
+  try {
+    payload = (await response.json()) as { format?: unknown; version?: unknown };
+  } catch {
+    throw codeError('function_error');
+  }
+  const version = String(payload.version ?? '');
+  if (!/^[0-9]+$/.test(version)) {
+    throw codeError('function_error');
+  }
+  const format = normalizeSuggestionFormat(String(payload.format ?? ''), mimeType);
+  const path = `${CLOUDINARY_SUGGESTION_PREFIX}${suggestionId}/${grant.image_id}.${format}:${version}`;
+  invalidateSuggestionUrl();
+  return path;
+}
+
+/**
+ * Cached read URL for a suggestion image.
+ * Cloudinary pointers resolve via the suggestion-image-signed-url Edge
+ * Function (owner + admin gate). Legacy Supabase paths resolve to null
+ * (cutover — 0091 nulled them server-side).
+ */
+export async function getSuggestionImageSignedUrl(path: string): Promise<string | null> {
+  if (!isCloudinarySuggestionImagePath(path)) {
+    return null;
+  }
+  const cached = suggestionUrlCache.get(path);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+  const inFlight = suggestionUrlPending.get(path);
+  if (inFlight) {
+    return inFlight;
+  }
+  const request = invokeFunction<{ signed_url: string }>('suggestion-image-signed-url', {
+    method: 'POST',
+    body: { path },
+  })
+    .then((res) => {
+      const url = typeof res?.signed_url === 'string' ? res.signed_url : null;
+      if (url) {
+        suggestionUrlCache.set(path, {
+          url,
+          expiresAt: Date.now() + (SUGGESTION_SIGNED_URL_TTL_SECONDS - 300) * 1000,
+        });
+      }
+      return url;
+    })
+    .catch(() => null)
+    .finally(() => {
+      suggestionUrlPending.delete(path);
+    });
+  suggestionUrlPending.set(path, request);
+  return request;
+}
+
+/**
+ * Best-effort destroy of a Cloudinary suggestion image (admin flows call
+ * this before deleteSuggestion()). Never throws — the suggestion DML
+ * stays authoritative.
+ */
+export async function deleteSuggestionImage(path: string | null | undefined): Promise<void> {
+  if (!isCloudinarySuggestionImagePath(path)) {
+    return;
+  }
+  try {
+    await invokeFunction('suggestion-image-delete', { method: 'POST', body: { path } });
+  } catch {
+    /* orphaned asset is harmless — never block the suggestion delete */
+  } finally {
+    invalidateSuggestionUrl(path);
+  }
+}
+
+const AVATAR_IMAGE_BUCKET = 'avatars'; // legacy reads only (dual-read window, 0089)
+const AVATAR_SIGNED_URL_TTL_SECONDS = 3600;
+
+/** Prefix of Cloudinary avatar pointers: cloudinary:<uid>/avatar.<ext>:<version>. */
+export const CLOUDINARY_AVATAR_PREFIX = 'cloudinary:';
+
+const cloudinaryCloudName =
+  (import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined)?.trim() ?? '';
+
+/** In-memory cache of avatar signed URLs (path -> { url, expiresAt }). */
+const avatarUrlCache = new Map<string, { url: string; expiresAt: number }>();
+
+/** In-flight signed URL requests (path -> promise) so concurrent grids never double-fetch. */
+const avatarUrlPending = new Map<string, Promise<string | null>>();
+
+export function invalidateAvatarUrl(path?: string | null): void {
+  if (path) {
+    avatarUrlCache.delete(path);
+    avatarUrlPending.delete(path);
+  } else {
+    avatarUrlCache.clear();
+    avatarUrlPending.clear();
+  }
+}
+
+/** Storage extension for an avatar MIME type (validated upstream to jpeg/png/webp). */
+export function avatarExtensionFor(mimeType: string): string {
+  if (mimeType === 'image/png') return 'png';
+  if (mimeType === 'image/webp') return 'webp';
+  return 'jpg';
+}
+
+/** True for Cloudinary pointers (cloudinary:<uid>/avatar.<ext>:<version>). */
+export function isCloudinaryAvatarPath(path: string | null | undefined): boolean {
+  return typeof path === 'string' && path.startsWith(CLOUDINARY_AVATAR_PREFIX);
+}
+
+export interface CloudinaryAvatarPointer {
+  uid: string;
+  format: string;
+  version: string;
+}
+
+/**
+ * Parses a Cloudinary avatar pointer. Returns null for anything else
+ * (including legacy Supabase paths). Mirrors parseAvatarPath() in
+ * supabase/functions/_shared/cloudinary.ts.
+ */
+export function parseCloudinaryAvatarPath(path: string): CloudinaryAvatarPointer | null {
+  if (!isCloudinaryAvatarPath(path)) {
+    return null;
+  }
+  const rest = path.slice(CLOUDINARY_AVATAR_PREFIX.length);
+  const versionSep = rest.lastIndexOf(':');
+  if (versionSep < 0) {
+    return null;
+  }
+  const version = rest.slice(versionSep + 1);
+  const head = rest.slice(0, versionSep);
+  const slash = head.indexOf('/');
+  if (slash < 0) {
+    return null;
+  }
+  const uid = head.slice(0, slash);
+  const file = head.slice(slash + 1);
+  if (!file.startsWith('avatar.')) {
+    return null;
+  }
+  const format = file.slice('avatar.'.length);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(uid)) {
+    return null;
+  }
+  if (format !== 'jpg' && format !== 'jpeg' && format !== 'png' && format !== 'webp') {
+    return null;
+  }
+  if (!/^[0-9]+$/.test(version)) {
+    return null;
+  }
+  return { uid, format, version };
+}
+
+interface AvatarUploadSignature {
+  upload_url: string;
+  cloud_name: string;
+  api_key: string;
+  timestamp: string;
+  signature: string;
+  public_id: string;
+}
+
+/** Signed-upload grant for the caller's own avatar (active students only). */
+export async function requestAvatarUploadSignature(file: File): Promise<AvatarUploadSignature> {
+  return invokeFunction<AvatarUploadSignature>('avatar-upload-signature', {
+    body: { content_type: file.type || undefined, file_size: file.size },
+  });
+}
+
+/** Normalizes a Cloudinary upload-response format to the allow-listed set. */
+function normalizeAvatarFormat(format: string, fallbackMime: string): string {
+  const normalized = format.trim().toLowerCase();
+  if (normalized === 'jpg' || normalized === 'jpeg') return 'jpg';
+  if (normalized === 'png') return 'png';
+  if (normalized === 'webp') return 'webp';
+  return avatarExtensionFor(fallbackMime);
+}
+
+/**
+ * Uploads the avatar bytes to Cloudinary (type=authenticated, fixed
+ * owner-only public_id) and returns the pointer to bind via
+ * setMyAvatar(). Original file bytes are uploaded untouched (full
+ * quality preserved), like the legacy flow.
+ */
+export async function uploadAvatarToCloudinary(userId: string, file: File): Promise<string> {
+  if (!cloudinaryCloudName) {
+    throw codeError('misconfigured');
+  }
+  const grant = await requestAvatarUploadSignature(file);
+  const form = new FormData();
+  form.append('file', file);
+  form.append('api_key', grant.api_key);
+  form.append('timestamp', grant.timestamp);
+  form.append('public_id', grant.public_id);
+  form.append('type', 'authenticated');
+  form.append('overwrite', 'true');
+  form.append('invalidate', 'true');
+  form.append('signature', grant.signature);
+  let response: Response;
+  try {
+    response = await fetch(grant.upload_url, { method: 'POST', body: form });
+  } catch {
+    throw codeError('network_error');
+  }
+  if (!response.ok) {
+    throw codeError('function_error');
+  }
+  let payload: { format?: unknown; version?: unknown };
+  try {
+    payload = (await response.json()) as { format?: unknown; version?: unknown };
+  } catch {
+    throw codeError('function_error');
+  }
+  const version = String(payload.version ?? '');
+  if (!/^[0-9]+$/.test(version)) {
+    throw codeError('function_error');
+  }
+  const format = normalizeAvatarFormat(String(payload.format ?? ''), file.type);
+  const path = `${CLOUDINARY_AVATAR_PREFIX}${userId}/avatar.${format}:${version}`;
+  invalidateAvatarUrl();
+  return path;
+}
+
+/** Fixed storage path for a user's avatar — one object per user, overwritten on re-upload. */
+export function avatarPathFor(userId: string, mimeType = 'image/jpeg'): string {
+  return `${userId}/avatar.${avatarExtensionFor(mimeType)}`;
+}
+
+/** Direct upload of the avatar file (0089: Cloudinary, owner-only public_id). */
+export async function uploadMyAvatar(userId: string, file: File): Promise<string> {
+  return uploadAvatarToCloudinary(userId, file);
+}
+
+/** Binds the uploaded avatar to the caller's profile (server-pinned path). */
+export async function setMyAvatar(path: string): Promise<void> {
+  const { error } = await getSupabaseClient().rpc('set_my_avatar', { p_path: path });
+  if (error) {
+    throw error;
+  }
+  invalidateAvatarUrl(path);
+}
+
+/** Clears the avatar binding and removes the bytes best-effort. */
+export async function removeMyAvatar(): Promise<void> {
+  // Best-effort Cloudinary destroy first (idempotent — a missing asset
+  // still succeeds); the binding clear below is authoritative either way.
+  try {
+    await invokeFunction('avatar-delete', {});
+  } catch {
+    /* binding clear below still runs; an orphaned asset is overwritten on next upload */
+  }
+  const { error } = await getSupabaseClient().rpc('remove_my_avatar');
+  if (error) {
+    throw error;
+  }
+  invalidateAvatarUrl();
+}
+
+/**
+ * Staff bulk reminder for students without a photo.
+ * Returns the number of newly inserted notifications.
+ */
+export async function remindMissingAvatars(): Promise<number> {
+  const { data, error } = await getSupabaseClient().rpc('remind_missing_avatars');
+  if (error) {
+    throw error;
+  }
+  return Number(data ?? 0);
+}
+
+/**
+ * Cached read URL for an avatar.
+ * Cloudinary pointers resolve via the avatar-signed-url Edge Function
+ * (owner + staff gate); legacy Supabase paths resolve straight from
+ * the private `avatars` bucket (dual-read window, 0089).
+ */
+export async function getAvatarSignedUrl(path: string): Promise<string | null> {
+  const cached = avatarUrlCache.get(path);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.url;
+  }
+  const inFlight = avatarUrlPending.get(path);
+  if (inFlight) {
+    return inFlight;
+  }
+  const request = (isCloudinaryAvatarPath(path)
+    ? invokeFunction<{ signed_url: string }>('avatar-signed-url', { body: { path } }).then(
+        (res) => {
+          const url = typeof res?.signed_url === 'string' ? res.signed_url : null;
+          if (url) {
+            avatarUrlCache.set(path, {
+              url,
+              expiresAt: Date.now() + (AVATAR_SIGNED_URL_TTL_SECONDS - 300) * 1000,
+            });
+          }
+          return url;
+        },
+        () => null,
+      )
+    : getSupabaseClient()
+        .storage.from(AVATAR_IMAGE_BUCKET)
+        .createSignedUrl(path, AVATAR_SIGNED_URL_TTL_SECONDS)
+        .then(({ data, error }) => {
+          if (error) {
+            return null;
+          }
+          const url = data?.signedUrl ?? null;
+          if (url) {
+            avatarUrlCache.set(path, {
+              url,
+              expiresAt: Date.now() + (AVATAR_SIGNED_URL_TTL_SECONDS - 300) * 1000,
+            });
+          }
+          return url;
+        })
+  ).finally(() => {
+    avatarUrlPending.delete(path);
+  });
+  avatarUrlPending.set(path, request);
+  return request;
+}
+

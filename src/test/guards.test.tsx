@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+﻿import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -20,12 +20,12 @@ describe('route guards', () => {
   it('redirects unauthenticated users to the login page', async () => {
     renderApp('/student/dashboard');
 
-    expect(await screen.findByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'يلا نكمل مذاكرة' })).toBeInTheDocument();
   });
 
   it('redirects a student away from staff routes', async () => {
-    setAuthenticatedStudent();
-    renderApp('/moyasser/students');
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
+    renderApp('/Moyasser/students');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
@@ -33,7 +33,7 @@ describe('route guards', () => {
   });
 
   it('restores the session on reload and skips the guest pages', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     renderApp('/login');
 
     await waitFor(() => {
@@ -52,7 +52,7 @@ describe('route guards', () => {
 
   it('allows a teacher to access staff routes', async () => {
     setAuthenticatedTeacher();
-    renderApp('/moyasser/students');
+    renderApp('/Moyasser/students');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
@@ -61,7 +61,7 @@ describe('route guards', () => {
 
   it('allows an admin to access staff routes', async () => {
     setAuthenticatedMoyasser({ role: 'admin', id: 'user-admin-1', email: 'admin@example.com' });
-    renderApp('/moyasser/students');
+    renderApp('/Moyasser/students');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'إدارة الطلاب' })).toBeInTheDocument();
@@ -69,7 +69,7 @@ describe('route guards', () => {
   });
 
   it('shows a neutral loading state while the profile is being fetched, then renders', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     renderApp('/student/dashboard');
 
     expect(screen.getByText('جاري التحقق من الحساب')).toBeInTheDocument();
@@ -81,7 +81,7 @@ describe('route guards', () => {
   });
 
   it('shows an error card with retry when the profile fetch fails, and recovers', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     mockState.singleQueryErrors.profiles = 'connection failed';
     const user = userEvent.setup();
     renderApp('/student/dashboard');
@@ -99,7 +99,7 @@ describe('route guards', () => {
   });
 
   it('offers a sign-out escape hatch from the profile error card', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     mockState.singleQueryErrors.profiles = 'connection failed';
     const user = userEvent.setup();
     renderApp('/student/dashboard');
@@ -108,7 +108,7 @@ describe('route guards', () => {
     await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'يلا نكمل مذاكرة' })).toBeInTheDocument();
     });
   });
 
@@ -116,7 +116,7 @@ describe('route guards', () => {
     setAuthenticatedTeacher();
     mockState.profiles = [];
     const user = userEvent.setup();
-    renderApp('/moyasser/students');
+    renderApp('/Moyasser/students');
 
     expect(await screen.findByText('تعذر تحميل بيانات الحساب')).toBeInTheDocument();
     expect(screen.queryByText('جاري التحقق من الحساب')).not.toBeInTheDocument();
@@ -124,7 +124,7 @@ describe('route guards', () => {
     await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'يلا نكمل مذاكرة' })).toBeInTheDocument();
     });
   });
 
@@ -132,7 +132,7 @@ describe('route guards', () => {
     setAuthenticatedTeacher();
     mockState.profiles = [];
     const user = userEvent.setup();
-    renderApp('/moyasser/students');
+    renderApp('/Moyasser/students');
 
     await screen.findByText('تعذر تحميل بيانات الحساب');
 
@@ -152,7 +152,7 @@ describe('route guards', () => {
   });
 
   it('shows the bootstrap error card when session restore hangs, then recovers on retry', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     const authContext = (await import('../features/auth/AuthContext')) as unknown as {
       AUTH_BOOTSTRAP_TIMEOUT_MS: { value: number };
     };
@@ -173,7 +173,7 @@ describe('route guards', () => {
   });
 
   it('signs out from the header and lands on the login page', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     const user = userEvent.setup();
     renderApp('/student/dashboard');
 
@@ -181,12 +181,12 @@ describe('route guards', () => {
     await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'يلا نكمل مذاكرة' })).toBeInTheDocument();
     });
   });
 
   it('allows a student to open the units page', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     renderApp('/student/units');
 
     await waitFor(() => {
@@ -207,7 +207,7 @@ describe('route guards', () => {
 
   it('allows mr_moyasser to open the codes page', async () => {
     setAuthenticatedMoyasser();
-    renderApp('/moyasser/codes');
+    renderApp('/Moyasser/codes');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'أكواد الوحدات' })).toBeInTheDocument();
@@ -216,7 +216,7 @@ describe('route guards', () => {
 
   it('allows an admin to open the pricing page', async () => {
     setAuthenticatedMoyasser({ role: 'admin', id: 'user-admin-1', email: 'admin@example.com' });
-    renderApp('/moyasser/pricing');
+    renderApp('/Moyasser/pricing');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'أسعار الوحدات' })).toBeInTheDocument();
@@ -224,8 +224,8 @@ describe('route guards', () => {
   });
 
   it('redirects a student away from the codes page', async () => {
-    setAuthenticatedStudent();
-    renderApp('/moyasser/codes');
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
+    renderApp('/Moyasser/codes');
 
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'لوحة الطالب' })).toBeInTheDocument();
@@ -233,7 +233,7 @@ describe('route guards', () => {
   });
 
   it('still clears the session and navigates to login when the remote sign-out fails', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     mockState.signOutError = 'network error';
     const user = userEvent.setup();
     renderApp('/student/dashboard');
@@ -242,7 +242,7 @@ describe('route guards', () => {
     await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }));
 
     await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'تسجيل الدخول' })).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'يلا نكمل مذاكرة' })).toBeInTheDocument();
     });
     expect(await screen.findByText('تعذر تسجيل الخروج. حاول مرة أخرى لاحقًا')).toBeInTheDocument();
   });
@@ -275,7 +275,7 @@ describe('route guards', () => {
   });
 
   it('redirects a student away from admin routes', async () => {
-    setAuthenticatedStudent();
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg' });
     renderApp('/admin/roles');
 
     await waitFor(() => {
@@ -283,3 +283,4 @@ describe('route guards', () => {
     });
   });
 });
+

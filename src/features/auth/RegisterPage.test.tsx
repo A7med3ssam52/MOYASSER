@@ -1,8 +1,8 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+﻿import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { expectAuthCall, makeGrade, mockState, resetMockState } from '../../test/supabase-mock';
+import { expectAuthCall, makeGrade, makeProfile, mockState, resetMockState } from '../../test/supabase-mock';
 import { renderApp } from '../../test/utils';
 
 describe('RegisterPage', () => {
@@ -12,16 +12,24 @@ describe('RegisterPage', () => {
     mockState.grades.push(makeGrade({ id: 'grade-2', name: 'الصف الثاني الثانوي' }));
   });
 
-  const fillValidForm = async (user: ReturnType<typeof userEvent.setup>) => {
+  const fillValidForm = async (
+    user: ReturnType<typeof userEvent.setup>,
+    opts?: { skipGrade?: boolean; skipTerms?: boolean },
+  ) => {
     await screen.findByLabelText('الاسم الكامل');
     await user.type(screen.getByLabelText('الاسم الكامل'), 'أحمد محمد');
     await user.type(screen.getByLabelText('البريد الإلكتروني'), 'new@example.com');
     await user.type(screen.getByLabelText('رقم الهاتف'), '01001234567');
     await user.type(screen.getByLabelText(/ولي الأمر/), '01112345678');
     await user.type(screen.getByLabelText('العنوان'), 'القاهرة');
-    await user.selectOptions(screen.getByLabelText('الصف الدراسي'), 'grade-1');
+    if (!opts?.skipGrade) {
+      await user.click(await screen.findByRole('button', { name: 'الصف الأول الثانوي' }));
+    }
     await user.type(screen.getByLabelText('كلمة المرور'), 'secret123');
     await user.type(screen.getByLabelText('تأكيد كلمة المرور'), 'secret123');
+    if (!opts?.skipTerms) {
+      await user.click(screen.getByLabelText(/الشروط والأحكام/));
+    }
   };
 
   it('shows validation errors for an empty form', async () => {
@@ -44,11 +52,21 @@ describe('RegisterPage', () => {
     const user = userEvent.setup();
     renderApp('/register');
 
-    await fillValidForm(user);
-    fireEvent.change(screen.getByLabelText('الصف الدراسي'), { target: { value: '' } });
+    await fillValidForm(user, { skipGrade: true });
     await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
 
     expect(await screen.findByText('يجب اختيار الصف الدراسي')).toBeInTheDocument();
+    expect(expectAuthCall('signUp')).toBeUndefined();
+  });
+
+  it('requires terms acceptance and does not sign up without it', async () => {
+    const user = userEvent.setup();
+    renderApp('/register');
+
+    await fillValidForm(user, { skipTerms: true });
+    await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
+
+    expect(await screen.findByText('يجب الموافقة على الشروط والأحكام أولاً')).toBeInTheDocument();
     expect(expectAuthCall('signUp')).toBeUndefined();
   });
 
@@ -95,11 +113,54 @@ describe('RegisterPage', () => {
     expect(screen.getByText('رقم الهاتف يجب أن يبدأ بـ 01 أو +20')).toBeInTheDocument();
   });
 
+  it('rejects identical student and guardian phone numbers', async () => {
+    const user = userEvent.setup();
+    renderApp('/register');
+
+    await fillValidForm(user);
+    const guardianInput = screen.getByLabelText(/ولي الأمر/);
+    await user.clear(guardianInput);
+    await user.type(guardianInput, '01001234567');
+
+    await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
+
+    expect(
+      screen.getByText('رقم ولي الأمر يجب أن يكون مختلفًا عن رقم الطالب'),
+    ).toBeInTheDocument();
+    expect(expectAuthCall('signUp')).toBeUndefined();
+  });
+
+  it('rejects identical phones written in different formats', async () => {
+    const user = userEvent.setup();
+    renderApp('/register');
+
+    await fillValidForm(user);
+    const guardianInput = screen.getByLabelText(/ولي الأمر/);
+    await user.clear(guardianInput);
+    await user.type(guardianInput, '+201001234567');
+
+    await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
+
+    expect(
+      screen.getByText('رقم ولي الأمر يجب أن يكون مختلفًا عن رقم الطالب'),
+    ).toBeInTheDocument();
+    expect(expectAuthCall('signUp')).toBeUndefined();
+  });
+
   it('signs up and redirects to the student dashboard when a session is created', async () => {
     const user = userEvent.setup();
     renderApp('/register');
 
     await fillValidForm(user);
+    // The sign-up mock creates the profile; seed the avatar so the
+    // avatar gate lets the fresh session through to the dashboard.
+    mockState.profiles.push(
+      makeProfile({
+        id: 'user-test-1',
+        email: 'new@example.com',
+        avatar_path: 'user-test-1/avatar.jpg',
+      }),
+    );
     await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
 
     await waitFor(() => {
@@ -132,6 +193,13 @@ describe('RegisterPage', () => {
     await user.clear(guardianInput);
     await user.type(guardianInput, '011-1234-5678');
 
+    mockState.profiles.push(
+      makeProfile({
+        id: 'user-test-1',
+        email: 'new@example.com',
+        avatar_path: 'user-test-1/avatar.jpg',
+      }),
+    );
     await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
 
     await waitFor(() => {
@@ -181,7 +249,6 @@ describe('RegisterPage', () => {
       );
     });
   });
-
   it('shows an Arabic message for the GoTrue rate-limit error', async () => {
     mockState.signUpError = 'For security purposes, you can only request this after 30 seconds.';
     const user = userEvent.setup();
@@ -197,4 +264,22 @@ describe('RegisterPage', () => {
       );
     });
   });
+
+  it('shows an Arabic message when the student phone is already registered', async () => {
+    mockState.signUpError =
+      'duplicate key value violates unique constraint "profiles_phone"';
+    const user = userEvent.setup();
+    renderApp('/register');
+
+    await fillValidForm(user);
+    await user.click(screen.getByRole('button', { name: 'إنشاء حساب' }));
+
+    await waitFor(() => {
+      const form = screen.getByLabelText('الاسم الكامل').closest('form');
+      expect(within(form as HTMLElement).getByRole('alert')).toHaveTextContent(
+        'رقم هاتف الطالب مسجل بالفعل، استخدم رقمًا آخر',
+      );
+    });
+  });
 });
+

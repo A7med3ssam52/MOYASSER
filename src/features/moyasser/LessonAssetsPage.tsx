@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   ChevronDown,
@@ -11,7 +11,6 @@ import {
   MessageSquareText,
   RefreshCw,
   Trash2,
-  Video as VideoIcon,
 } from 'lucide-react';
 
 import { Badge } from '../../components/Badge';
@@ -24,14 +23,10 @@ import { LayoutShell } from '../../components/LayoutShell';
 import { LessonStatusBadge } from '../../components/LessonStatusBadge';
 import { Modal } from '../../components/Modal';
 import { Skeleton } from '../../components/Skeleton';
-import { Spinner } from '../../components/Spinner';
 import { RoleNav } from '../../components/RoleNav';
 import { useToast } from '../../components/Toast';
-import { VideoPlayer } from '../../components/VideoPlayer';
 import {
   addYoutubeVideo,
-  cancelVideoUploadSession,
-  createVideoUploadSession,
   deleteBoardUpload,
   deleteLessonVideo,
   deletePdfUpload,
@@ -39,9 +34,7 @@ import {
   finalizePdfUpload,
   getLessonById,
   getLessonBoardSignedUrls,
-  getPlaybackUrl,
   getRpcErrorCode,
-  getVideoThumbnailUrl,
   deleteLessonComment,
   listLessonBoards,
   listLessonComments,
@@ -54,8 +47,6 @@ import {
   uploadPdfBytes,
 } from '../../data/rpc';
 import { formatDateTime } from '../../lib/format';
-import { uploadManager } from '../../upload/uploadManager';
-import type { VideoUploadJob } from '../../upload/uploadManager';
 import type {
   Lesson,
   LessonBoard,
@@ -103,7 +94,6 @@ const PDF_ERROR_MESSAGES: Record<string, string> = {
   forbidden: 'ليست لديك صلاحية',
   wrong_lesson: 'الملف لا ينتمي لهذا الدرس',
   pdf_not_found: 'ملف PDF غير موجود',
-  pdf_not_pending: 'الملف مكتمل ولا يمكن حذفه',
   pdf_upload_failed: 'فشل رفع الملف إلى التخزين. حاول مرة أخرى',
   upload_url_failed: 'فشل إنشاء رابط الرفع. حاول مرة أخرى',
   pdf_reservation_failed: 'فشل إنشاء سجل الملف. حاول مرة أخرى',
@@ -222,10 +212,6 @@ function formatFileSize(bytes: number | null): string {
   return `${Math.max(1, Math.round(bytes / 1024))} ك.ب`;
 }
 
-function formatMib(bytes: number): string {
-  return `${(bytes / (1024 * 1024)).toFixed(1)} م.ب`;
-}
-
 /**
  * True when the page runs inside another app's embedded browser
  * (WhatsApp/Facebook/Instagram/Telegram/...). Those WebViews frequently
@@ -239,21 +225,6 @@ function isInAppBrowser(): boolean {
   return /FBAN|FBAV|FB_IAB|FB4A|Instagram|WhatsApp|Telegram|Twitter|Line\/|Snapchat|TikTok|Musical\.ly|Pinterest|WeChat|MicroMessenger|QQ|Weibo|; wv/i.test(
     navigator.userAgent,
   );
-}
-
-function formatDuration(seconds: number | null): string {
-  if (seconds === null || seconds === undefined) {
-    return '';
-  }
-  const total = Math.max(0, Math.floor(seconds));
-  const minutes = Math.floor(total / 60);
-  const rest = total % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(rest).padStart(2, '0')}`;
-}
-
-function isVideoFile(file: File): boolean {
-  const videoTypes = ['video/mp4', 'video/webm', 'video/quicktime'];
-  return videoTypes.includes(file.type) || /\.(mp4|webm|mov)$/i.test(file.name);
 }
 
 function parseYoutubeVideoId(input: string): string | null {
@@ -280,14 +251,7 @@ const STAGE_LABELS: Record<Exclude<UploadStage, 'idle'>, string> = {
   finalizing: 'جاري تأكيد الملف...',
 };
 
-interface PreviewState {
-  loading: boolean;
-  url: string | null;
-  error: string | null;
-}
-
 const MAX_PDF_SIZE = 50 * 1024 * 1024;
-const MAX_VIDEO_SIZE = 2 * 1024 * 1024 * 1024;
 const MAX_BOARD_SIZE = 10 * 1024 * 1024;
 // Creating the signed upload URL must be fast; beyond this the request is
 // treated as a network failure so the user always gets feedback.
@@ -304,55 +268,6 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     }
   });
 }
-const VIDEO_POLL_INTERVAL_MS = 4000;
-
-function isVideoActive(video: LessonVideo): boolean {
-  return video.status !== 'ready' && video.status !== 'failed' && video.status !== 'replaced';
-}
-
-/**
- * Thumbnail fetched through get-video-thumbnail-url: the lesson_videos
- * thumbnail_url column is an UNSIGNED CDN URL and is deliberately not
- * exposed to the client (review finding MED-3); every render goes
- * through the EF which returns a short-lived IP-locked signed URL.
- * Rendered only for ready videos; hidden silently on any error.
- */
-function VideoThumbnail({ videoId, isReady }: { videoId: string; isReady: boolean }) {
-  const [url, setUrl] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    if (!isReady) {
-      return;
-    }
-    setUrl(null);
-    getVideoThumbnailUrl(videoId)
-      .then((res) => {
-        if (!cancelled) {
-          setUrl(res.thumbnail_url);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setUrl(null);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [videoId, isReady]);
-  if (!url) {
-    return null;
-  }
-  return (
-    <img
-      src={url}
-      alt="صورة مصغرة للفيديو"
-      loading="lazy"
-      className="h-16 w-28 shrink-0 rounded-md object-cover"
-    />
-  );
-}
-
 function ListSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div className="flex flex-col gap-3" aria-hidden="true">
@@ -366,6 +281,10 @@ function ListSkeleton({ rows = 3 }: { rows?: number }) {
 export function LessonAssetsPage() {
   const { lessonId } = useParams<{ lessonId: string }>();
   const { showToast } = useToast();
+  // Assistant policy: FULL WRITE here by design — lesson assets (videos /
+  // boards / PDFs / comments) are the assistant's core workspace alongside
+  // exams. Curriculum structure stays read-only (see Curriculum*Page);
+  // backend RLS/RPCs enforce the same boundary.
 
   const [lesson, setLesson] = useState<Lesson | null>(null);
   const [lessonLoading, setLessonLoading] = useState(true);
@@ -393,9 +312,6 @@ export function LessonAssetsPage() {
 
   const [videos, setVideos] = useState<LessonVideo[] | null>(null);
   const [videosError, setVideosError] = useState(false);
-  const [videoPickError, setVideoPickError] = useState<string | null>(null);
-  const [managerJobs, setManagerJobs] = useState<VideoUploadJob[]>([]);
-  const [preview, setPreview] = useState<PreviewState | null>(null);
   const [deleteVideo, setDeleteVideo] = useState<LessonVideo | null>(null);
   const [youtubeUrl, setYoutubeUrl] = useState('');
   const [youtubeTitle, setYoutubeTitle] = useState('');
@@ -405,12 +321,10 @@ export function LessonAssetsPage() {
   const [comments, setComments] = useState<LessonComment[] | null>(null);
   const [commentsError, setCommentsError] = useState(false);
   const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
-  const [cancellingVideoId, setCancellingVideoId] = useState<string | null>(null);
   const [deletingVideoId, setDeletingVideoId] = useState<string | null>(null);
   const [deletingPdfId, setDeletingPdfId] = useState<string | null>(null);
   const [deletePdf, setDeletePdf] = useState<LessonPdf | null>(null);
 
-  const videoFileInputRef = useRef<HTMLInputElement | null>(null);
   const pdfFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadLesson = useCallback(async () => {
@@ -513,22 +427,6 @@ export function LessonAssetsPage() {
       showToast(commentErrorMessage(err), 'error');
     } finally {
       setDeletingCommentId(null);
-    }
-  };
-
-  const handleCancelPendingVideo = async (video: LessonVideo) => {
-    if (!lessonId) {
-      return;
-    }
-    setCancellingVideoId(video.id);
-    try {
-      await cancelVideoUploadSession(lessonId, video.id);
-      showToast('تم إلغاء الرفع');
-      await loadVideos();
-    } catch (err) {
-      showToast(videoErrorMessage(err), 'error');
-    } finally {
-      setCancellingVideoId(null);
     }
   };
 
@@ -653,18 +551,6 @@ export function LessonAssetsPage() {
     void loadComments();
     void loadBoards();
   }, [loadLesson, loadPdfs, loadVideos, loadComments, loadBoards]);
-
-  const anyVideoActive = useMemo(() => (videos ?? []).some(isVideoActive), [videos]);
-
-  useEffect(() => {
-    if (!lessonId || !anyVideoActive) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      void loadVideos();
-    }, VIDEO_POLL_INTERVAL_MS);
-    return () => window.clearInterval(timer);
-  }, [lessonId, anyVideoActive, loadVideos]);
 
   const sortedVideos = useMemo(() => {
     if (!videos) {
@@ -797,61 +683,6 @@ export function LessonAssetsPage() {
     }
   };
 
-  const handleVideoFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
-    const selected = event.target.files?.[0] ?? null;
-    if (event.target) {
-      event.target.value = '';
-    }
-    if (!selected) {
-      return;
-    }
-    if (!isVideoFile(selected)) {
-      setVideoPickError('يجب اختيار ملف فيديو بصيغة MP4 أو WebM أو MOV فقط');
-      return;
-    }
-    if (selected.size > MAX_VIDEO_SIZE) {
-      setVideoPickError('حجم الملف يتجاوز الحد المسموح (2 جيجابايت)');
-      return;
-    }
-    setVideoPickError(null);
-    if (!lessonId) {
-      return;
-    }
-    try {
-      const session = await createVideoUploadSession(lessonId, 'create');
-      await uploadManager.enqueueVideoUpload({ lessonId, file: selected, session });
-      showToast('بدأ الرفع في الخلفية');
-      void loadVideos();
-    } catch (err) {
-      showToast(videoErrorMessage(err), 'error');
-    }
-  };
-
-  useEffect(() => {
-    return uploadManager.subscribe((jobs) => {
-      setManagerJobs(jobs.filter((job) => job.lessonId === lessonId));
-    });
-  }, [lessonId]);
-
-  const handledJobIdsRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    for (const job of managerJobs) {
-      if (handledJobIdsRef.current.has(job.jobId)) {
-        continue;
-      }
-      if (job.stage === 'done') {
-        handledJobIdsRef.current.add(job.jobId);
-        showToast('تم رفع الفيديو — جاري المعالجة');
-        void loadVideos();
-      } else if (job.stage === 'failed') {
-        handledJobIdsRef.current.add(job.jobId);
-        showToast(VIDEO_ERROR_MESSAGES.upload_failed, 'error');
-        void loadVideos();
-      }
-    }
-  }, [managerJobs, loadVideos, showToast]);
-
   const handleDeleteVideo = async (video: LessonVideo) => {
     if (!lessonId) {
       return;
@@ -893,23 +724,6 @@ export function LessonAssetsPage() {
     }
   };
 
-  const openPreview = async (video: LessonVideo) => {
-    if (!lessonId) {
-      return;
-    }
-    setPreview({ loading: true, url: null, error: null });
-    try {
-      const response = await getPlaybackUrl(lessonId, video.id);
-      setPreview({ loading: false, url: response.playback_url, error: null });
-    } catch (err) {
-      setPreview({ loading: false, url: null, error: videoErrorMessage(err) });
-    }
-  };
-
-  const closePreview = () => {
-    setPreview(null);
-  };
-
   const uploadBusy = stage !== 'idle';
   const boardBusy = boardStage !== 'idle';
 
@@ -922,7 +736,7 @@ export function LessonAssetsPage() {
       actions={
         <Link
           to="/moyasser/curriculum"
-          className="glass-soft inline-flex h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
+          className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-foreground shadow-subtle transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
         >
           <DirectionalArrow direction="back" />
           العودة إلى المنهج
@@ -963,7 +777,7 @@ export function LessonAssetsPage() {
 
         <Card
           title="فيديوهات الدرس"
-          subtitle="أضف فيديو من جهازك (MP4 / WebM / MOV، بحد أقصى 2 جيجابايت) أو أضف فيديو من يوتيوب بالرابط"
+          subtitle="أضف فيديوهات الدرس من يوتيوب بالرابط"
           actions={
             <Button
               variant="secondary"
@@ -989,79 +803,29 @@ export function LessonAssetsPage() {
               {sortedVideos === null || sortedVideos.length === 0 ? (
                 <EmptyState
                   title="لا توجد فيديوهات لهذا الدرس بعد"
-                  description="ارفع أول فيديو من الزر بالأسفل وسيظهر هنا."
+                  description="أضف أول فيديو يوتيوب من النموذج بالأسفل وسيظهر هنا."
                 />
               ) : (
                 <ul className="flex flex-col gap-2">
                   {sortedVideos.map((video) => {
-                    const job = managerJobs.find((item) => item.videoId === video.id);
-                    const isBunnyReady =
-                      video.source === 'bunny' && video.status === 'ready';
-                    const isCancelling = cancellingVideoId === video.id;
                     const isDeleting = deletingVideoId === video.id;
-                    const jobActive =
-                      job && ['queued', 'uploading', 'paused'].includes(job.stage);
                     return (
                       <li
                         key={video.id}
                         data-testid={`video-row-${video.id}`}
-                        className="glass-soft flex flex-wrap items-center justify-between gap-3 rounded-lg p-3"
+                        className="flex border border-border bg-surface-muted flex-wrap items-center justify-between gap-3 rounded-lg p-3"
                       >
                         <div className="flex min-w-0 items-start gap-3">
-                          {isBunnyReady ? (
-                            <VideoThumbnail videoId={video.id} isReady />
-                          ) : null}
                           <div className="min-w-0">
-                            {video.source === 'youtube' ? (
-                              <p className="truncate text-sm font-medium text-foreground" dir="rtl">
-                                {video.title ?? 'فيديو يوتيوب'}
-                              </p>
-                            ) : null}
+                            <p className="truncate text-sm font-medium text-foreground" dir="rtl">
+                              {video.title ?? 'فيديو يوتيوب'}
+                            </p>
                             <p className="text-xs text-foreground-subtle" dir="ltr">
-                              {video.source === 'youtube'
-                                ? (video.youtube_video_id ?? '')
-                                : (video.bunny_video_id ?? '')}
+                              {video.youtube_video_id ?? ''}
                             </p>
                             <p className="mt-1 text-xs text-foreground-subtle">
                               أُضيف {formatDateTime(video.created_at)}
-                              {video.duration_seconds !== null &&
-                              video.duration_seconds !== undefined
-                                ? ` — المدة ${formatDuration(video.duration_seconds)}`
-                                : ''}
                             </p>
-                            {video.status === 'failed' ? (
-                              <p role="alert" className="mt-1 text-xs font-medium text-error">
-                                {video.error_message ?? 'فشل معالجة الفيديو'} — حاول رفع الفيديو
-                                مرة أخرى
-                              </p>
-                            ) : null}
-                            {job && job.stage === 'failed' ? (
-                              <p role="alert" className="mt-1 text-xs font-medium text-error">
-                                {VIDEO_ERROR_MESSAGES.upload_failed}
-                              </p>
-                            ) : null}
-                            {jobActive ? (
-                              <div className="mt-2 flex max-w-md flex-col gap-1">
-                                <p className="text-xs text-foreground-muted" role="status">
-                                  جارٍ رفع الملف ({job.progress}%)...
-                                </p>
-                                <div
-                                  role="progressbar"
-                                  aria-valuenow={job.progress}
-                                  aria-valuemin={0}
-                                  aria-valuemax={100}
-                                  className="h-2 w-full overflow-hidden rounded-full bg-border"
-                                >
-                                  <div
-                                    className="h-full rounded-full bg-primary transition-all duration-500 ease-standard"
-                                    style={{ width: `${job.progress}%` }}
-                                  />
-                                </div>
-                                <p className="text-xs text-foreground-subtle">
-                                  {formatMib(job.bytesSent)} من {formatMib(job.bytesTotal)}
-                                </p>
-                              </div>
-                            ) : null}
                           </div>
                         </div>
                         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1069,37 +833,14 @@ export function LessonAssetsPage() {
                             {VIDEO_STATUS_LABELS[video.status]}
                           </Badge>
                           {video.is_primary ? <Badge variant="info">الأساسي</Badge> : null}
-                          {video.source === 'youtube' ? (
-                            <Badge
-                              variant="info"
-                              icon={
-                                <ExternalLink aria-hidden="true" className="h-3 w-3" />
-                              }
-                            >
-                              يوتيوب
-                            </Badge>
-                          ) : null}
-                          {video.status === 'pending_upload' ? (
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              icon={<Trash2 aria-hidden="true" className="h-4 w-4" />}
-                              onClick={() => void handleCancelPendingVideo(video)}
-                              disabled={isCancelling}
-                            >
-                              {isCancelling ? 'جاري الإلغاء...' : 'إلغاء'}
-                            </Button>
-                          ) : null}
-                          {isBunnyReady ? (
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              icon={<Eye aria-hidden="true" className="h-4 w-4" />}
-                              onClick={() => void openPreview(video)}
-                            >
-                              معاينة
-                            </Button>
-                          ) : null}
+                          <Badge
+                            variant="info"
+                            icon={
+                              <ExternalLink aria-hidden="true" className="h-3 w-3" />
+                            }
+                          >
+                            يوتيوب
+                          </Badge>
                           <Button
                             size="sm"
                             variant="danger"
@@ -1118,35 +859,7 @@ export function LessonAssetsPage() {
 
               <div className="glass-tile rounded-lg border border-dashed border-primary/25 p-4">
                 <div className="flex flex-col gap-3">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <input
-                      ref={videoFileInputRef}
-                      id="video-file"
-                      name="video-file"
-                      type="file"
-                      accept="video/mp4,video/webm,video/quicktime"
-                      aria-label="اختيار ملف الفيديو"
-                      onChange={(event) => void handleVideoFileChange(event)}
-                      className="hidden"
-                    />
-                    <Button
-                      icon={<VideoIcon aria-hidden="true" className="h-4 w-4" />}
-                      onClick={() => videoFileInputRef.current?.click()}
-                    >
-                      إضافة فيديو
-                    </Button>
-                    <div className="flex min-w-0 flex-1 flex-col gap-1">
-                      <p className="text-xs text-foreground-subtle">
-                        الرفع يستمر في الخلفية — يمكنك مغادرة الصفحة وسيكتمل الرفع تلقائياً
-                      </p>
-                      {videoPickError ? (
-                        <p role="alert" className="text-xs font-medium text-error">
-                          {videoPickError}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                  <div className="flex flex-col gap-2 border-t border-white/10 pt-3">
+                  <div className="flex flex-col gap-2">
                     <div className="flex flex-wrap items-end gap-3">
                       <div className="flex min-w-56 flex-1 flex-col gap-1">
                         <label
@@ -1163,7 +876,7 @@ export function LessonAssetsPage() {
                           placeholder="https://www.youtube.com/watch?v=..."
                           value={youtubeUrl}
                           onChange={(event) => setYoutubeUrl(event.target.value)}
-                          className="block w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:border-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/40"
+                          className="block w-full rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:border-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/40"
                         />
                       </div>
                       <div className="flex min-w-56 flex-1 flex-col gap-1">
@@ -1180,7 +893,7 @@ export function LessonAssetsPage() {
                           placeholder="عنوان الفيديو"
                           value={youtubeTitle}
                           onChange={(event) => setYoutubeTitle(event.target.value)}
-                          className="block w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:border-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/40"
+                          className="block w-full rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm text-foreground placeholder:text-foreground-subtle focus:border-primary-strong focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong/40"
                         />
                       </div>
                       <Button
@@ -1231,7 +944,7 @@ export function LessonAssetsPage() {
                 ref={pdfFileInputRef}
                 data-testid="pdf-upload-input"
                 onChange={(event) => handleFileChange(event)}
-                className="block w-full max-w-md text-sm text-foreground-muted file:me-3 file:rounded-md file:border-0 file:bg-gradient-to-br file:from-primary file:to-accent file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground file:shadow-[0_8px_18px_-6px_rgba(99,102,241,0.5)] file:transition-[filter] hover:file:brightness-110"
+                className="block w-full max-w-md text-sm text-foreground-muted file:me-3 file:rounded-md file:border-0 file:bg-primary-strong file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground file:shadow-subtle file:transition-colors"
               />
             </div>
             {uploadError ? (
@@ -1299,7 +1012,7 @@ export function LessonAssetsPage() {
                   <li
                     key={comment.id}
                     data-testid={`staff-comment-${comment.id}`}
-                    className={`glass-soft flex flex-wrap items-start justify-between gap-3 rounded-lg p-3 ${
+                    className={`flex border border-border bg-surface-muted flex-wrap items-start justify-between gap-3 rounded-lg p-3 ${
                       isReply ? 'ms-6 border-primary/15 bg-primary/5' : ''
                     }`}
                   >
@@ -1326,7 +1039,7 @@ export function LessonAssetsPage() {
                       icon={<Trash2 aria-hidden="true" className="h-4 w-4" />}
                       onClick={() => void handleDeleteComment(comment)}
                       disabled={isDeleting || comment.status === 'removed'}
-                      className="shrink-0 text-error hover:bg-rose-500/10 hover:text-error"
+                      className="shrink-0 text-error hover:bg-surface-muted hover:text-error"
                     >
                       {isDeleting ? 'جاري الحذف...' : 'حذف'}
                     </Button>
@@ -1381,7 +1094,7 @@ export function LessonAssetsPage() {
                     <div
                       key={board.id}
                       data-testid={`board-card-${board.id}`}
-                      className="glass-soft flex flex-col overflow-hidden rounded-lg"
+                      className="flex border border-border bg-surface-muted flex-col overflow-hidden rounded-lg"
                     >
                       <button
                         type="button"
@@ -1401,7 +1114,7 @@ export function LessonAssetsPage() {
                         ) : (
                           <span
                             data-testid={`board-img-${board.id}`}
-                            className="flex h-28 w-full items-center justify-center rounded-t-lg bg-white/5"
+                            className="flex h-28 w-full items-center justify-center rounded-t-lg bg-surface-muted"
                             aria-hidden="true"
                           >
                             <ImageIcon className="h-8 w-8 text-foreground-subtle" />
@@ -1492,7 +1205,7 @@ export function LessonAssetsPage() {
                     aria-label="اختيار صورة السبورة"
                     data-testid="board-upload-input"
                     onChange={handleBoardFileChange}
-                    className="block w-full max-w-md text-sm text-foreground-muted file:me-3 file:rounded-md file:border-0 file:bg-gradient-to-br file:from-primary file:to-accent file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground file:shadow-[0_8px_18px_-6px_rgba(99,102,241,0.5)] file:transition-[filter] hover:file:brightness-110"
+                    className="block w-full max-w-md text-sm text-foreground-muted file:me-3 file:rounded-md file:border-0 file:bg-primary-strong file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary-foreground file:shadow-subtle file:transition-colors"
                   />
                 </div>
                 {boardUploadError ? (
@@ -1542,7 +1255,7 @@ export function LessonAssetsPage() {
                 <li
                   key={pdf.id}
                   data-testid={`pdf-row-${pdf.id}`}
-                  className="glass-soft flex flex-wrap items-center justify-between gap-3 rounded-lg p-3"
+                  className="flex border border-border bg-surface-muted flex-wrap items-center justify-between gap-3 rounded-lg p-3"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-foreground" dir="rtl">
@@ -1600,29 +1313,6 @@ export function LessonAssetsPage() {
             — أُضيف {formatDateTime(deleteVideo.created_at)}
           </p>
         ) : null}
-      </Modal>
-
-      <Modal
-        open={preview !== null}
-        title="معاينة الفيديو"
-        confirmLabel="إغلاق"
-        cancelLabel="إغلاق"
-        onConfirm={closePreview}
-        onCancel={closePreview}
-      >
-        <div className="mt-4">
-          {preview?.loading ? (
-            <Spinner label="جاري تجهيز الفيديو" />
-          ) : preview?.error ? (
-            <p role="alert" className="text-sm font-medium text-error">
-              {preview.error}
-            </p>
-          ) : preview?.url ? (
-            <div className="glass-card overflow-hidden rounded-2xl border-white/15 p-1.5">
-              <VideoPlayer src={preview.url} />
-            </div>
-          ) : null}
-        </div>
       </Modal>
 
       <Modal
@@ -1686,3 +1376,4 @@ export function LessonAssetsPage() {
     </LayoutShell>
   );
 }
+

@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+﻿import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const hlsMock = vi.hoisted(() => {
@@ -78,7 +78,7 @@ function seedLessonPage() {
 describe('StudentLessonPage — exams tab', () => {
   beforeEach(() => {
     resetMockState();
-    setAuthenticatedStudent({ grade_id: 'grade-1' });
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg', grade_id: 'grade-1' });
     hlsMock.handlers.length = 0;
   });
 
@@ -228,7 +228,7 @@ describe('StudentLessonPage — exams tab', () => {
 describe('StudentLessonPage — comments tab', () => {
   beforeEach(() => {
     resetMockState();
-    setAuthenticatedStudent({ grade_id: 'grade-1' });
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg', grade_id: 'grade-1' });
     hlsMock.handlers.length = 0;
   });
 
@@ -304,3 +304,4 @@ describe('StudentLessonPage — comments tab', () => {
     expect(await screen.findByText('لا توجد تعليقات بعد')).toBeInTheDocument();
   });
 });
+

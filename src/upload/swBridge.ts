@@ -1,4 +1,4 @@
-/**
+﻿/**
  * App ↔ service-worker bridge. Every call degrades gracefully: when the
  * service worker is missing or the message fails, `null`/`undefined` is
  * returned instead of throwing.

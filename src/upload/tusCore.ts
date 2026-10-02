@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Pure TUS protocol over fetch — used by the in-page fallback uploader and
  * covered by mock-fetch tests. The service worker ships its own embedded copy
  * (public/sw.js) because importScripts is not allowed there.

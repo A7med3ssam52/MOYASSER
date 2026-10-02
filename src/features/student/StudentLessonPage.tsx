@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   CheckCircle2,
@@ -29,6 +29,7 @@ import { Skeleton } from '../../components/Skeleton';
 import { Spinner } from '../../components/Spinner';
 import { StudentNav } from '../../components/StudentNav';
 import { VideoPlayer } from '../../components/VideoPlayer';
+import { VoucherRedeemOption, voucherValidityLabel } from '../../components/VoucherRedeemOption';
 import { YouTubeEmbed } from '../../components/YouTubeEmbed';
 import { useToast } from '../../components/Toast';
 import { WhatsAppIcon } from '../../components/WhatsAppIcon';
@@ -36,13 +37,16 @@ import { useAuth } from '../auth/AuthContext';
 import { StudentLessonCommentsTab } from './StudentLessonCommentsTab';
 import { StudentLessonExamsTab } from './StudentLessonExamsTab';
 import {
+  broadcastProgressUpdated,
   getLessonBoardSignedUrls,
   getLessonById,
   getMyLessonAccess,
   getMyProgress,
+  getMyStreak,
   getPdfSignedUrl,
   getPlaybackUrl,
   getPublicSettings,
+  getRpcErrorCode,
   getUnitById,
   listLessonPdfs,
   listLessonsForUnit,
@@ -58,6 +62,7 @@ import type {
   LessonBoardSignedUrl,
   LessonPdf,
   LessonVideo,
+  MyStreak,
   PdfAccessResponse,
   PlaybackResponse,
   Progress,
@@ -67,7 +72,15 @@ import type {
 import { redeemErrorMessage } from './redeemErrors';
 
 const PROGRESS_SAVE_INTERVAL_MS = 5000;
-const COMPLETION_PERCENT = 90;
+/**
+ * سياسة الإكمال الموحدة:
+ * مكتمل = is_completed. تلقائي عند percent>=90، يدوي عبر الزر،
+ * امتحان عبر toggle(..., 'exam') بعد تسليم ناجح.
+ * PDF/سبورة = engagement (10%) فقط ولا يُكمل تلقائياً.
+ */
+export const COMPLETION_PERCENT = 90;
+/** Minimal percent recorded for PDF/board engagement (never auto-completes). */
+export const ENGAGEMENT_PERCENT = 10;
 
 const WALLET_NUMBER = '01554416004';
 const INSTAPAY_URL = 'https://ipn.eg/S/moyasser888/instapay/6a8lU0';
@@ -78,6 +91,15 @@ const WHATSAPP_RECEIPT_MESSAGE =
 type LessonTab = 'exams' | 'comments';
 
 function errorCode(error: unknown): string | null {
+  // Delegate to the shared RPC decoder so custom RAISE codes carried in
+  // `message` (e.g. progress_stale_video via P0001) are recognised — the
+  // naive `.code`-only check misses them and silences the stale handler.
+  try {
+    const decoded = getRpcErrorCode(error);
+    if (decoded) return decoded;
+  } catch {
+    // fall through to legacy check
+  }
   if (error && typeof error === 'object') {
     const code = (error as { code?: unknown }).code;
     if (typeof code === 'string' && code.length > 0) {
@@ -129,6 +151,8 @@ export function StudentLessonPage() {
   const [loadError, setLoadError] = useState(false);
   const [redeemError, setRedeemError] = useState<string | null>(null);
   const [redeemBusy, setRedeemBusy] = useState(false);
+  const [streak, setStreak] = useState<MyStreak | null>(null);
+  const [voucherChecked, setVoucherChecked] = useState(false);
   const [activeTab, setActiveTab] = useState<LessonTab | null>(null);
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [isPlaylistOpen, setIsPlaylistOpen] = useState(false);
@@ -138,6 +162,8 @@ export function StudentLessonPage() {
   const savingRef = useRef(false);
   const lastPositionRef = useRef(0);
   const requestIdRef = useRef(0);
+  const pdfEngagementRef = useRef(false);
+  const boardEngagementRef = useRef(false);
 
   const allVideos = useMemo<LessonVideo[]>(() => {
     const list: LessonVideo[] = [];
@@ -387,29 +413,73 @@ export function StudentLessonPage() {
     }
   }, [pdfAccess, pdfDownloading]);
 
+  // Reset per-lesson engagement flags + save guards on navigation.
+  useEffect(() => {
+    pdfEngagementRef.current = false;
+    boardEngagementRef.current = false;
+    lastSaveRef.current = 0;
+    savingRef.current = false;
+    lastPositionRef.current = 0;
+  }, [lessonId]);
+
   const saveProgress = useCallback(
-    async (position: number, percent: number) => {
+    async (position: number, percent: number, opts: { force?: boolean } = {}) => {
       if (!lesson) {
         return;
       }
+      const safePosition = Number.isFinite(position) && position >= 0 ? Math.floor(position) : 0;
+      const safePercent = Number.isFinite(percent)
+        ? Math.min(100, Math.max(0, percent))
+        : 0;
+      const isCompletionSave = safePercent >= COMPLETION_PERCENT;
       const now = Date.now();
-      if (now - lastSaveRef.current < PROGRESS_SAVE_INTERVAL_MS && percent < COMPLETION_PERCENT) {
+      if (
+        !opts.force &&
+        !isCompletionSave &&
+        now - lastSaveRef.current < PROGRESS_SAVE_INTERVAL_MS
+      ) {
         return;
       }
-      lastSaveRef.current = now;
       if (savingRef.current) {
-        return;
+        // Fix #4 — سباق 100%: حفظ الإكمال يتجاوز savingRef (انتظار + إعادة
+        // محاولة مرة واحدة). المسارات غير المكتملة تُسقط بهدوء.
+        if (isCompletionSave || opts.force) {
+          try {
+            await new Promise((r) => setTimeout(r, 700));
+          } catch {
+            // ignore timer errors
+          }
+          if (savingRef.current) {
+            return;
+          }
+        } else {
+          return;
+        }
       }
+      // Fix #4: لا تحدّث lastSave إلا عند بدء حفظ فعلي (بعد فحص savingRef).
+      lastSaveRef.current = Date.now();
       savingRef.current = true;
       try {
-        const updated = await upsertProgress(lesson.id, position, percent);
+        const updated = await upsertProgress(lesson.id, safePosition, safePercent);
         const wasCompleted = progress?.is_completed ?? false;
         setProgress(updated);
+        broadcastProgressUpdated(lesson.id);
         if (updated.is_completed && !wasCompleted) {
           showToast('أحسنت! تم إكمال الدرس', 'success');
         }
-      } catch {
-        // progress is best-effort; a failed save never blocks playback
+      } catch (err) {
+        // Fix #10: أخطاء صامتة — progress_stale_video في المسار التلقائي:
+        // تنبيه غير حاجب + log، ولا يوقف التشغيل أبداً.
+        const code = errorCode(err);
+        if (code === 'progress_stale_video') {
+          try {
+            console.warn('[progress] stale video — reload recommended', { lessonId: lesson.id });
+          } catch {
+            // ignore
+          }
+          showToast('تم تحديث فيديو الدرس — حدّث الصفحة لمزامنة تقدمك', 'info');
+        }
+        // other progress errors stay best-effort silent
       } finally {
         savingRef.current = false;
       }
@@ -417,25 +487,44 @@ export function StudentLessonPage() {
     [lesson, progress?.is_completed, showToast],
   );
 
+  // Fix #3 — تعدد الفيديوهات: التقدم يتبع primary فقط.
+  const isPrimaryActive = (primaryVideo?.id ?? null) !== null && activeVideo?.id === primaryVideo?.id;
+
   const handleProgress = useCallback(
     (position: number, percent: number) => {
-      lastPositionRef.current = position;
+      if (!Number.isFinite(position)) return;
+      lastPositionRef.current = Math.floor(position);
+      // Secondary videos never feed progress (primary-only policy).
+      if (!isPrimaryActive) return;
       void saveProgress(position, percent);
     },
-    [saveProgress],
+    [saveProgress, isPrimaryActive],
   );
 
+  const handleYouTubeProgress = useCallback(
+    (position: number, percent: number) => {
+      if (!Number.isFinite(position)) return;
+      lastPositionRef.current = Math.floor(position);
+      if (!isPrimaryActive) return;
+      void saveProgress(position, percent);
+    },
+    [saveProgress, isPrimaryActive],
+  );
+
+  // Single completion path (fix #4): onEnded → save 100% (force, bypasses throttle).
   const handleComplete = useCallback(() => {
-    void saveProgress(lastPositionRef.current, 100);
-  }, [saveProgress]);
+    if (!isPrimaryActive) return;
+    void saveProgress(lastPositionRef.current, 100, { force: true });
+  }, [saveProgress, isPrimaryActive]);
 
   const handleToggleComplete = useCallback(async () => {
     if (!lesson || togglingComplete) return;
     const nextCompleted = !(progress?.is_completed ?? false);
     setTogglingComplete(true);
     try {
-      const updated = await toggleLessonCompleted(lesson.id, nextCompleted);
+      const updated = await toggleLessonCompleted(lesson.id, nextCompleted, 'manual');
       setProgress(updated);
+      broadcastProgressUpdated(lesson.id);
       showToast(
         nextCompleted ? 'تم وضع علامة مكتمل ✓' : 'تم إلغاء علامة مكتمل',
         nextCompleted ? 'success' : 'info',
@@ -443,6 +532,11 @@ export function StudentLessonPage() {
     } catch (err) {
       const code = errorCode(err);
       if (code === 'progress_stale_video') {
+        try {
+          console.warn('[progress] stale video on toggle', { lessonId: lesson.id });
+        } catch {
+          // ignore
+        }
         showToast('حدث تحديث للفيديو، يرجى تحديث الصفحة', 'error');
       } else {
         showToast('تعذر تحديث حالة الدرس', 'error');
@@ -452,12 +546,72 @@ export function StudentLessonPage() {
     }
   }, [lesson, progress?.is_completed, togglingComplete, showToast]);
 
-  const handleRedeem = async (code: string): Promise<boolean> => {
+  // Fix #2 — تسليم امتحان ناجح → toggle(true, 'exam') (سياسة موحدة وموثقة).
+  const handleExamSubmitted = useCallback(
+    async (examId: string) => {
+      void examId;
+      if (!lesson || progress?.is_completed) return;
+      try {
+        const updated = await toggleLessonCompleted(lesson.id, true, 'exam');
+        setProgress(updated);
+        broadcastProgressUpdated(lesson.id);
+        showToast('أحسنت! اكتمل الدرس بتسليم الامتحان ✓', 'success');
+      } catch (err) {
+        const code = errorCode(err);
+        if (code === 'progress_stale_video') {
+          showToast('تم تحديث فيديو الدرس — حدّث الصفحة لمزامنة تقدمك', 'info');
+        }
+        // exam submit itself already succeeded — never surface as submit error
+      }
+    },
+    [lesson, progress?.is_completed, showToast],
+  );
+
+  // Fix #2 — فتح PDF / مشاهدة سبورة = engagement (10%) فقط، لا إكمال تلقائي.
+  const recordEngagement = useCallback(() => {
+    if (!lesson || progress?.is_completed) return;
+    void saveProgress(lastPositionRef.current, ENGAGEMENT_PERCENT, { force: false });
+  }, [lesson, progress?.is_completed, saveProgress]);
+
+  useEffect(() => {
+    if (pdfPreviewOpen && !pdfEngagementRef.current) {
+      pdfEngagementRef.current = true;
+      recordEngagement();
+    }
+  }, [pdfPreviewOpen, recordEngagement]);
+
+  // Fix #2 — سبورة: تُسجل عند المشاهدة الفعلية (أول صورة تُحمّل/تظهر)،
+  // وليس عند جلب الروابط فقط (حتى لا تستهلك نافذة حفظ الفيديو).
+  const handleBoardViewed = useCallback(() => {
+    if (!boardEngagementRef.current) {
+      boardEngagementRef.current = true;
+      recordEngagement();
+    }
+  }, [recordEngagement]);
+
+  // PDF download also counts as engagement (wraps the earlier downloader).
+  const handlePdfDownloadWithEngagement = useCallback(() => {
+    if (!pdfEngagementRef.current && !(progress?.is_completed ?? false)) {
+      pdfEngagementRef.current = true;
+      recordEngagement();
+    }
+    void handlePdfDownload();
+  }, [handlePdfDownload, progress?.is_completed, recordEngagement]);
+
+  // Fix #3 — resume position only for the primary video matching the saved
+  // progress.video_id (secondary videos always start at 0).
+  const resumePosition =
+    progress && (progress.video_id == null || progress.video_id === primaryVideo?.id)
+      ? (progress.position_seconds ?? 0)
+      : 0;
+
+  const handleRedeem = async (code: string, useVoucher = false): Promise<boolean> => {
     setRedeemError(null);
     setRedeemBusy(true);
     try {
-      await redeemUnitCode(code);
-      showToast('تم تفعيل الوحدة بنجاح');
+      await redeemUnitCode(code, useVoucher);
+      showToast(useVoucher ? 'تم تفعيل الوحدة مع إعفاء رسوم المنصة' : 'تم تفعيل الوحدة بنجاح');
+      setVoucherChecked(false);
       await load();
       return true;
     } catch (err) {
@@ -467,6 +621,21 @@ export function StudentLessonPage() {
       setRedeemBusy(false);
     }
   };
+
+  // Voucher availability is best-effort and never blocks the lesson page.
+  useEffect(() => {
+    let active = true;
+    getMyStreak()
+      .then((row) => {
+        if (active) setStreak(row);
+      })
+      .catch(() => {
+        // best-effort
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   if (loadError) {
     return (
@@ -561,7 +730,7 @@ export function StudentLessonPage() {
                 </a>
               ) : null}
 
-              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="rounded-xl border border-border bg-surface-muted p-4">
                 <h4 className="flex items-center gap-2 font-display text-sm font-bold text-foreground">
                   <Receipt className="h-4 w-4 text-primary" />
                   طريقة الحصول على كود التفعيل
@@ -572,7 +741,7 @@ export function StudentLessonPage() {
                   <span className="font-mono font-semibold text-foreground">MYSR-XXXX</span> مباشرة.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3">
+                  <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground-muted">
                       <Wallet className="h-3.5 w-3.5" />
                       تحويل على المحفظة
@@ -588,7 +757,7 @@ export function StudentLessonPage() {
                       {WALLET_NUMBER}
                     </a>
                   </div>
-                  <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3">
+                  <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground-muted">
                       <CreditCard className="h-3.5 w-3.5" />
                       تحويل عبر إنستاباي
@@ -607,15 +776,15 @@ export function StudentLessonPage() {
                       href={INSTAPAY_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex w-fit items-center gap-1 rounded-md border border-white/12 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-white/10"
+                      className="inline-flex w-fit items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                       فتح رابط إنستاباي
                     </a>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-col gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-100">
+                <div className="mt-4 flex flex-col gap-3 rounded-lg border border-[rgba(127,191,142,0.25)] bg-[rgba(127,191,142,0.08)] p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="flex items-center gap-2 text-sm font-medium text-success">
                     <Send className="h-4 w-4 shrink-0" />
                     بعد التحويل، أرسل الإيصال على واتساب ليصلك الكود
                   </p>
@@ -637,8 +806,17 @@ export function StudentLessonPage() {
                 </p>
               </div>
 
+              {streak?.voucher.status === 'granted' ? (
+                <div className="mb-3">
+                  <VoucherRedeemOption
+                    validityLabel={voucherValidityLabel(streak.voucher.expires_at)}
+                    checked={voucherChecked}
+                    onChange={setVoucherChecked}
+                  />
+                </div>
+              ) : null}
               <RedeemCodeForm
-                onSubmit={(code) => handleRedeem(code)}
+                onSubmit={(code) => handleRedeem(code, streak?.voucher.status === 'granted' && voucherChecked)}
                 busy={redeemBusy}
                 error={redeemError}
               />
@@ -694,14 +872,14 @@ export function StudentLessonPage() {
 
         {/* Manual completion toggle — student can mark/unmark lesson as completed */}
         {progressLoaded ? (
-          <Card className="conic-ring spotlight-card !p-0 overflow-hidden">
+          <Card className="!p-0 overflow-hidden">
             <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
                 <span
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${
                     progress?.is_completed
-                      ? 'bg-emerald-500/15 text-emerald-600 ring-emerald-500/20 dark:text-emerald-400'
-                      : 'bg-white/5 text-foreground-muted ring-white/10'
+                      ? 'bg-[rgba(127,191,142,0.1)] text-success ring-[rgba(127,191,142,0.25)]'
+                      : 'bg-surface-muted text-foreground-muted ring-border'
                   }`}
                   aria-hidden="true"
                 >
@@ -728,10 +906,10 @@ export function StudentLessonPage() {
                 disabled={togglingComplete}
                 data-testid="toggle-complete-btn"
                 aria-pressed={progress?.is_completed ?? false}
-                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm transition-all focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong disabled:opacity-50 disabled:cursor-not-allowed ${
+                className={`inline-flex shrink-0 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong disabled:opacity-50 disabled:cursor-not-allowed ${
                   progress?.is_completed
-                    ? 'border border-amber-500/20 bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-300'
-                    : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-[0_4px_16px_rgba(16,185,129,0.3)]'
+                    ? 'border border-[rgba(217,167,95,0.35)] bg-[rgba(217,167,95,0.08)] text-warning hover:bg-[rgba(217,167,95,0.14)]'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-500'
                 }`}
               >
                 {togglingComplete ? (
@@ -745,14 +923,14 @@ export function StudentLessonPage() {
               </button>
             </div>
             {!progress?.is_completed && progress && Number(progress.percent_completed) > 0 ? (
-              <div className="border-t border-white/5 bg-white/[0.02] px-4 py-2.5">
+              <div className="border-t border-border-muted bg-surface-muted px-4 py-2.5">
                 <div className="flex items-center justify-between text-xs text-foreground-muted">
                   <span>تقدمك الحالي</span>
                   <span dir="ltr" className="font-mono font-semibold text-foreground">
                     {Math.round(Number(progress.percent_completed))}%
                   </span>
                 </div>
-                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/10">
+                <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-border-muted">
                   <div
                     className="h-full rounded-full bg-emerald-500 transition-all duration-500"
                     style={{ width: `${Math.min(100, Math.round(Number(progress.percent_completed)))}%` }}
@@ -781,6 +959,11 @@ export function StudentLessonPage() {
                 <YouTubeEmbed
                   videoId={activeVideo.youtube_video_id}
                   title={activeVideo.title ?? 'فيديو الدرس'}
+                  // Fix #1 + #3: periodic YT IFrame polling feeds the SAME
+                  // saveProgress path — primary only. Secondary YouTube
+                  // videos render manual-only (visible reminder).
+                  onProgress={isPrimaryActive ? handleYouTubeProgress : undefined}
+                  onComplete={isPrimaryActive ? handleComplete : undefined}
                 />
               ) : playback && progressLoaded ? (
                 (() => {
@@ -799,9 +982,9 @@ export function StudentLessonPage() {
                     <VideoPlayer
                       key={activeVideo.id}
                       src={rawUrl.trim()}
-                      initialPosition={progress?.position_seconds ?? 0}
-                      onProgress={handleProgress}
-                      onComplete={handleComplete}
+                      initialPosition={isPrimaryActive ? resumePosition : 0}
+                      onProgress={isPrimaryActive ? handleProgress : undefined}
+                      onComplete={isPrimaryActive ? handleComplete : undefined}
                     />
                   );
                 })()
@@ -815,13 +998,13 @@ export function StudentLessonPage() {
                 </div>
               ) : playbackError === 'access_denied' ? (
                 <div className="glass-card glass-tile-warning rounded-lg border p-4">
-                  <p className="text-sm font-medium text-amber-300">هذا الدرس غير متاح حاليًا</p>
-                  <p className="mt-1 text-sm text-amber-200">
+                  <p className="text-sm font-medium text-warning">هذا الدرس غير متاح حاليًا</p>
+                  <p className="mt-1 text-sm text-warning">
                     قد لا تكون الوحدة مفعّلة بعد. فعّل الوحدة من صفحة وحداتي للمتابعة.
                   </p>
                   <Link
                     to="/student/units"
-                    className="mt-3 inline-block rounded-lg border border-warning/40 bg-white/5 px-4 py-2.5 text-sm font-semibold text-warning transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+                    className="mt-3 inline-block rounded-lg border border-[rgba(217,167,95,0.35)] bg-surface px-4 py-2.5 text-sm font-semibold text-warning transition-colors hover:bg-[rgba(217,167,95,0.08)] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
                     data-testid="units-link"
                   >
                     الانتقال إلى وحداتي
@@ -856,7 +1039,7 @@ export function StudentLessonPage() {
             {/* Playlist dropdown — visible only when there is more than one video */}
             {allVideos.length > 1 ? (
               <div
-                className="glass-card overflow-hidden p-0 shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+                className="glass-card overflow-hidden p-0"
                 data-testid="lesson-extra-videos"
               >
                 <button
@@ -864,7 +1047,7 @@ export function StudentLessonPage() {
                   onClick={() => setIsPlaylistOpen((value) => !value)}
                   aria-expanded={isPlaylistOpen}
                   data-testid="lesson-playlist-toggle"
-                  className="flex w-full items-center justify-between gap-3 px-4 py-4 text-start transition-colors hover:bg-white/[0.04] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset sm:px-5"
+                  className="flex w-full items-center justify-between gap-3 px-4 py-4 text-start transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 focus-visible:ring-inset sm:px-5"
                 >
                   <div className="flex items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-primary ring-1 ring-primary/20">
@@ -884,7 +1067,7 @@ export function StudentLessonPage() {
                       {allVideos.length} فيديو
                     </Badge>
                     <span
-                      className={`flex h-8 w-8 items-center justify-center rounded-full border bg-white/5 text-foreground-muted transition-transform duration-200 ${isPlaylistOpen ? 'rotate-180 border-primary/20 bg-primary/15 text-primary' : 'border-white/10'}`}
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border bg-surface-muted text-foreground-muted transition-colors duration-200 ${isPlaylistOpen ? 'rotate-180 border-primary/20 bg-primary/15 text-primary' : 'border-border'}`}
                     >
                       <ChevronDown className="h-4 w-4" />
                     </span>
@@ -893,7 +1076,7 @@ export function StudentLessonPage() {
 
                 {isPlaylistOpen ? (
                   <div
-                    className="border-t border-white/10 bg-white/[0.02] p-2 sm:p-3"
+                    className="border-t border-border-muted bg-surface-muted p-2 sm:p-3"
                     data-testid="extra-video-list"
                   >
                     <ol className="flex flex-col gap-2">
@@ -909,17 +1092,17 @@ export function StudentLessonPage() {
                               data-testid={`playlist-item-${video.id}`}
                               // keep legacy ids for backwards compat where possible
                               data-legacy-testid={`extra-video-toggle-${video.id}`}
-                              className={`group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-start transition-all duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:px-4 ${
+                              className={`group flex w-full items-center justify-between gap-3 rounded-xl border px-3 py-3 text-start transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:px-4 ${
                                 isActive
-                                  ? 'border-primary/30 bg-primary/[0.08] shadow-[0_4px_16px_rgba(16,185,129,0.15)]'
-                                  : 'border-white/10 bg-white/[0.03] hover:border-white/15 hover:bg-white/[0.05]'
+                                  ? 'border-primary/30 bg-primary/[0.08]'
+                                  : 'border-border bg-surface hover:border-primary/50 hover:bg-surface-muted'
                               }`}
                             >
                               <div className="flex min-w-0 flex-1 items-center gap-3">
                                 <span
                                   className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-bold tabular-nums transition-colors ${
                                     isActive
-                                      ? 'border-primary/30 bg-primary text-white shadow-sm'
+                                      ? 'border-primary/30 bg-primary text-primary-foreground shadow-sm'
                                       : 'border-primary/20 bg-primary/15 text-primary'
                                   }`}
                                 >
@@ -952,7 +1135,7 @@ export function StudentLessonPage() {
                                   {isActive ? 'يعرض الآن' : 'فيديو'}
                                 </Badge>
                                 <span
-                                  className={`hidden h-2 w-2 shrink-0 rounded-full sm:inline-block ${isActive ? 'bg-primary shadow-[0_0_8px_rgba(16,185,129,0.6)]' : 'bg-white/20'}`}
+                                  className={`hidden h-2 w-2 shrink-0 rounded-full sm:inline-block ${isActive ? 'bg-primary' : 'bg-border'}`}
                                   aria-hidden="true"
                                 />
                               </div>
@@ -977,14 +1160,13 @@ export function StudentLessonPage() {
         {primaryPdf ? (
           <Card
             title="ملف الدرس"
-            className="conic-ring spotlight-card"
             actions={
               <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setPdfPreviewOpen((open) => !open)}
                   aria-expanded={pdfPreviewOpen}
-                  className="glass-soft inline-flex items-center gap-2 rounded-xl border border-white/5 px-3.5 py-2 text-sm font-bold text-foreground backdrop-blur transition-all hover:bg-white/10 hover:border-indigo-400/20 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+                  className="glass-soft inline-flex items-center gap-2 rounded-xl border border-border px-3.5 py-2 text-sm font-bold text-foreground transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
                   data-testid="lesson-pdf-toggle"
                 >
                   {pdfPreviewOpen ? (
@@ -1002,9 +1184,9 @@ export function StudentLessonPage() {
                     rel="noreferrer"
                     onClick={(event) => {
                       event.preventDefault();
-                      void handlePdfDownload();
+                      handlePdfDownloadWithEngagement();
                     }}
-                    className="btn-primary inline-flex w-fit items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold text-white shadow-[0_8px_20px_-10px_rgba(99,102,241,0.6)]"
+                    className="btn-primary inline-flex w-fit items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold"
                     data-testid="lesson-pdf-download"
                   >
                     <Download aria-hidden="true" className="h-4 w-4" />
@@ -1021,13 +1203,13 @@ export function StudentLessonPage() {
                     <iframe
                       src={pdfAccess.pdf_url}
                       title="ملف الدرس"
-                      className="h-72 w-full rounded-lg border-0 bg-white/5 sm:h-96"
+                      className="h-72 w-full rounded-lg border-0 bg-surface-muted sm:h-96"
                       data-testid="lesson-pdf-frame"
                     />
                   </div>
                 ) : null}
                 <p className="inline-flex items-center gap-2 text-sm font-medium text-foreground-muted">
-                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.6)]" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                   {pdfAccess.original_name ?? 'ملف الدرس'}
                 </p>
               </div>
@@ -1042,19 +1224,20 @@ export function StudentLessonPage() {
         ) : null}
 
         {boards && boards.length > 0 ? (
-          <Card title="سبورة الدرس" className="conic-ring spotlight-card">
+          <Card title="سبورة الدرس">
             <div
               className="grid grid-cols-2 gap-3 sm:grid-cols-3"
               data-testid="board-grid"
             >
               {boards.map((board) => (
-                <div key={board.board_id} className="group relative overflow-hidden rounded-xl border border-white/10 bg-white/5 p-1 transition-all duration-300 hover:border-indigo-400/30 hover:shadow-[0_8px_24px_-12px_rgba(99,102,241,0.4)] hover:-translate-y-1">
+                <div key={board.board_id} className="overflow-hidden rounded-xl border border-border bg-surface-muted p-1 transition-colors hover:border-primary/50">
                   <img
                     src={board.signed_url}
                     alt={board.original_name}
                     loading="lazy"
-                    className="aspect-video w-full rounded-lg bg-white/5 object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+                    className="aspect-video w-full rounded-lg bg-surface-muted object-cover"
                     data-testid={`board-image-${board.board_id}`}
+                    onLoad={handleBoardViewed}
                     onError={(e) => {
                       try {
                         const target = e.currentTarget as HTMLImageElement;
@@ -1064,7 +1247,6 @@ export function StudentLessonPage() {
                       }
                     }}
                   />
-                  <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
               ))}
             </div>
@@ -1074,7 +1256,7 @@ export function StudentLessonPage() {
         <div
           role="tablist"
           aria-label="أنشطة الدرس"
-          className="glass-card flex w-full flex-wrap items-center gap-1 p-1.5 sm:w-fit sm:rounded-full rounded-2xl border-white/10"
+          className="glass-card flex w-full flex-wrap items-center gap-1 p-1.5 sm:w-fit sm:rounded-full rounded-2xl"
         >
           {tabs.map((tab) => (
             <button
@@ -1082,10 +1264,10 @@ export function StudentLessonPage() {
               role="tab"
               aria-selected={activeTab === tab.id}
               onClick={() => setActiveTab(activeTab === tab.id ? null : tab.id)}
-              className={`flex-1 rounded-full px-5 py-2.5 text-sm font-bold transition-all duration-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 sm:flex-none ${
+              className={`flex-1 rounded-full px-5 py-2.5 text-sm font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 sm:flex-none ${
                 activeTab === tab.id
-                  ? 'nav-pill-active text-white shadow-[0_6px_16px_-6px_rgba(99,102,241,0.6)] scale-[1.02]'
-                  : 'text-foreground-muted hover:bg-white/6 hover:text-foreground'
+                  ? 'nav-pill-active text-white'
+                  : 'text-foreground-muted hover:bg-surface-muted hover:text-foreground'
               }`}
               data-testid={`lesson-tab-${tab.id}`}
             >
@@ -1095,7 +1277,7 @@ export function StudentLessonPage() {
         </div>
 
         {activeTab === 'exams' ? (
-          <StudentLessonExamsTab lessonId={lesson.id} />
+          <StudentLessonExamsTab lessonId={lesson.id} onExamSubmitted={(examId) => void handleExamSubmitted(examId)} />
         ) : activeTab === 'comments' ? (
           <StudentLessonCommentsTab lessonId={lesson.id} userId={user?.id ?? ''} />
         ) : null}
@@ -1104,10 +1286,10 @@ export function StudentLessonPage() {
           {prevLesson ? (
             <Link
               to={`/student/lessons/${prevLesson.id}`}
-              className="glass-card group inline-flex items-center justify-start gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-foreground-muted transition-all duration-300 hover:border-indigo-400/20 hover:text-foreground hover:shadow-[0_8px_24px_-12px_rgba(99,102,241,0.3)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
+              className="glass-card group inline-flex items-center justify-start gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-foreground-muted transition-colors hover:border-primary/50 hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong"
               data-testid="prev-lesson"
             >
-              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white/5 group-hover:bg-indigo-500/20 transition-colors">
+              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-surface-muted transition-colors">
                 <DirectionalArrow direction="back" size={14} />
               </span>
               <span className="truncate">الدرس السابق: {prevLesson.title}</span>
@@ -1116,7 +1298,7 @@ export function StudentLessonPage() {
           {nextLesson ? (
             <Link
               to={`/student/lessons/${nextLesson.id}`}
-              className="glass-card group inline-flex items-center justify-between gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-foreground transition-all duration-300 hover:border-indigo-400/20 hover:shadow-[0_8px_24px_-12px_rgba(99,102,241,0.3)] hover:-translate-y-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong sm:justify-start btn-primary"
+              className="glass-card group inline-flex items-center justify-between gap-2 rounded-xl px-4 py-3.5 text-sm font-bold text-foreground transition-colors hover:border-primary/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong sm:justify-start btn-primary"
               data-testid="next-lesson"
             >
               <span className="truncate">الدرس التالي: {nextLesson.title}</span>
@@ -1130,3 +1312,4 @@ export function StudentLessonPage() {
     </LayoutShell>
   );
 }
+

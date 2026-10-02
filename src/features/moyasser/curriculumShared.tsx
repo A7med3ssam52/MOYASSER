@@ -1,4 +1,4 @@
-import { Skeleton } from '../../components/Skeleton';
+﻿import { Skeleton } from '../../components/Skeleton';
 import { getRpcErrorCode } from '../../data/rpc';
 
 const CURRICULUM_ERROR_MESSAGES: Record<string, string> = {
@@ -36,11 +36,12 @@ export function OrderChip({ order, active = false }: { order: number; active?: b
       aria-hidden="true"
       className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border font-mono text-xs font-bold ${
         active
-          ? 'border-indigo-400/40 bg-indigo-500/20 text-indigo-200'
-          : 'border-white/10 bg-white/5 text-foreground-subtle'
+          ? 'border-primary-strong bg-primary-soft text-primary-strong'
+          : 'border-border bg-surface-muted text-foreground-subtle'
       }`}
     >
       {order}
     </span>
   );
 }
+

@@ -1,4 +1,4 @@
-interface WhatsAppIconProps {
+﻿interface WhatsAppIconProps {
   size?: number;
   className?: string;
 }
@@ -17,3 +17,4 @@ export function WhatsAppIcon({ size = 20, className }: WhatsAppIconProps) {
     </svg>
   );
 }
+

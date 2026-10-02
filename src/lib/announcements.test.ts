@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 
 import {
   ADMIN_DEFAULT_SIGNATURE,
@@ -29,3 +29,4 @@ describe('announcement signature helpers', () => {
     expect(resolveAnnouncementSignature('teacher', '   ')).toBe('الإدارة');
   });
 });
+

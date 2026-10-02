@@ -1,4 +1,4 @@
-import type { ContentStatus } from '../types/database';
+﻿import type { ContentStatus } from '../types/database';
 import { Badge, type BadgeVariant } from './Badge';
 
 const variants: Record<ContentStatus, BadgeVariant> = {

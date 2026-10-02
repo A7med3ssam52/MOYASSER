@@ -1,4 +1,4 @@
-/**
+﻿/**
  * PWA helpers — install prompt plumbing + service worker registration.
  * Keeps browser-install logic out of the UI so the custom prompt owns the UX.
  */
@@ -10,8 +10,8 @@ export interface BeforeInstallPromptEvent extends Event {
 }
 
 export const PWA_STORAGE_KEYS = {
-  installed: 'moyasser-pwa-installed',
-  dismissed: 'moyasser-pwa-dismissed-at',
+  installed: 'Moyasser-pwa-installed',
+  dismissed: 'Moyasser-pwa-dismissed-at',
 } as const;
 
 /** Re-show the custom prompt after this long since the last dismissal. */
@@ -132,3 +132,4 @@ export function forcePWAUpdate(): void {
     reg?.update().catch(() => {});
   });
 }
+

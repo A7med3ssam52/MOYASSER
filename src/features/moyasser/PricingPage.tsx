@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Pencil, Plus, Settings2 } from 'lucide-react';
 
 import { Badge } from '../../components/Badge';
@@ -238,17 +238,17 @@ export function PricingPage() {
                       {item.unit_name}
                     </TableCell>
                     <TableCell label="السعر الأساسي" dir="ltr" className="font-mono">
-                      {item.is_free ? <span className="text-emerald-300 font-semibold">مجاني</span> : formatPrice(item.base_price)}
+                      {item.is_free ? <span className="text-success font-semibold">مجاني</span> : formatPrice(item.base_price)}
                     </TableCell>
                     <TableCell label="رسوم المنصة" dir="ltr" className="font-mono">
-                      {item.is_free ? <span className="text-emerald-300 font-semibold">—</span> : formatPrice(item.platform_fee)}
+                      {item.is_free ? <span className="text-success font-semibold">—</span> : formatPrice(item.platform_fee)}
                     </TableCell>
                     <TableCell
                       label="الإجمالي"
                       dir="ltr"
                       className="font-mono font-medium"
                     >
-                      {item.is_free ? <span className="text-emerald-300">مجاني</span> : <span className="text-foreground">{formatPrice(item.total_price)}</span>}
+                      {item.is_free ? <span className="text-success">مجاني</span> : <span className="text-foreground">{formatPrice(item.total_price)}</span>}
                     </TableCell>
                     <TableCell label="الحالة">
                       {item.is_free ? (
@@ -397,3 +397,4 @@ export function PricingPage() {
     </LayoutShell>
   );
 }
+

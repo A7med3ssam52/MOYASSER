@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom';
+﻿import { Link } from 'react-router-dom';
 import { ChevronLeft } from 'lucide-react';
 
 import { SITE_URL } from '../lib/seo';
@@ -49,3 +49,4 @@ export function Breadcrumbs({ items, className }: BreadcrumbsProps) {
     </>
   );
 }
+

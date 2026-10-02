@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react';
+﻿import { screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -16,7 +16,7 @@ import { renderApp } from '../../test/utils';
 describe('StudentDashboardPage', () => {
   beforeEach(() => {
     resetMockState();
-    setAuthenticatedStudent({ full_name: 'أحمد محمد' });
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg',  full_name: 'أحمد محمد علي' });
   });
 
   it('shows a greeting and the profile summary', async () => {
@@ -132,3 +132,4 @@ describe('StudentDashboardPage', () => {
     expect(screen.queryByTestId('unread-count')).not.toBeInTheDocument();
   });
 });
+

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+﻿import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface DirectionalArrowProps {
   direction: 'back' | 'forward';
@@ -18,3 +18,4 @@ export function DirectionalArrow({ direction, size = 16, className }: Directiona
     </span>
   );
 }
+

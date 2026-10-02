@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { GraduationCap } from 'lucide-react';
 
@@ -10,9 +10,15 @@ import { LayoutShell } from '../../components/LayoutShell';
 import { RoleNav } from '../../components/RoleNav';
 import { listGrades } from '../../data/rpc';
 import type { Grade } from '../../types/database';
+import { useAuth } from '../auth/AuthContext';
 import { ListSkeleton } from './curriculumShared';
 
 export function CurriculumPage() {
+  const { role } = useAuth();
+  // Assistant policy: curriculum structure is read-only (no grade/unit/lesson
+  // CRUD — /moyasser/grades is staff-only). Exams + lesson assets stay full-write
+  // (see ExamsPage / LessonAssetsPage); backend enforces the same boundary.
+  const isAssistant = role === 'assistant';
   const [grades, setGrades] = useState<Grade[] | null>(null);
   const [error, setError] = useState(false);
 
@@ -42,7 +48,7 @@ export function CurriculumPage() {
         title="الصفوف"
         subtitle="انتقل من الصف إلى الوحدات ثم الدروس"
         actions={
-          hasGrades ? (
+          hasGrades && !isAssistant ? (
             <Link
               to="/moyasser/grades"
               className="inline-flex h-11 items-center gap-1.5 rounded-lg px-2.5 text-sm font-semibold text-primary-strong transition-colors hover:bg-primary-soft focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
@@ -61,13 +67,15 @@ export function CurriculumPage() {
             title="لا توجد صفوف نشطة"
             description="أنشئ صفًا أولاً من صفحة إدارة الصفوف لبدء بناء المنهج."
             action={
-              <Link
-                to="/moyasser/grades"
-                className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-gradient-to-br from-primary to-accent px-4 text-sm font-semibold text-primary-foreground shadow-[0_8px_18px_-6px_rgba(99,102,241,0.5)] transition-[filter] hover:brightness-110"
-              >
-                <GraduationCap aria-hidden="true" className="h-4 w-4" />
-                إدارة الصفوف
-              </Link>
+              isAssistant ? undefined : (
+                <Link
+                  to="/moyasser/grades"
+                  className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-strong px-4 text-sm font-semibold text-primary-foreground shadow-subtle transition-[filter]"
+                >
+                  <GraduationCap aria-hidden="true" className="h-4 w-4" />
+                  إدارة الصفوف
+                </Link>
+              )
             }
           />
         ) : (
@@ -76,12 +84,12 @@ export function CurriculumPage() {
               <li
                 key={grade.id}
                 data-testid={`grade-row-${grade.id}`}
-                className="glass-soft flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/8 p-3 transition-all duration-200 hover:border-indigo-400/20"
+                className="flex border border-border bg-surface-muted flex-wrap items-center justify-between gap-3 rounded-xl border border-border p-3 transition-all duration-200 hover:border-border"
               >
                 <div className="flex min-w-0 items-center gap-3">
                   <span
                     aria-hidden="true"
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500/25 to-fuchsia-500/25 text-indigo-300"
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[rgba(147,184,132,0.22)] bg-[rgba(147,184,132,0.12)] text-primary-strong"
                   >
                     <GraduationCap className="h-5 w-5" />
                   </span>
@@ -109,3 +117,4 @@ export function CurriculumPage() {
     </LayoutShell>
   );
 }
+

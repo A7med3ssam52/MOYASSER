@@ -75,6 +75,7 @@ async function main() {
 
   const { default: pg } = await import('pg');
   const client = new pg.Client({ host: '127.0.0.1', port: PORT, user: 'postgres', password: 'postgres', database: 'postgres' });
+  client.on('notice', (n) => log('        [notice] ' + String(n.message ?? n).split('\n')[0]));
   await client.connect();
 
   let ok = true;

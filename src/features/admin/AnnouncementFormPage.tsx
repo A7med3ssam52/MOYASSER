@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactElement } from 'react';
+﻿import { useCallback, useEffect, useState, type ReactElement } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Save, Eye, X } from 'lucide-react';
 
@@ -53,7 +53,7 @@ const initialForm: FormData = {
   link_url: '',
   link_label: '',
   variant: 'info',
-  target_roles: ['student', 'teacher', 'mr_moyasser', 'admin'],
+  target_roles: ['student', 'teacher', 'mr_moyasser', 'admin', 'assistant'],
   hide_on_paths: '',
   starts_at: new Date().toISOString().slice(0, 16),
   ends_at: '',

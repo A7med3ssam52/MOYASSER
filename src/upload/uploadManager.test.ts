@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   isSupported: vi.fn(),
@@ -108,7 +108,7 @@ describe('uploadManager', () => {
     });
     expect(mocks.uploadFileTus).not.toHaveBeenCalled();
 
-    const stored = JSON.parse(localStorage.getItem('moyasser-upload-jobs') ?? '[]');
+    const stored = JSON.parse(localStorage.getItem('Moyasser-upload-jobs') ?? '[]');
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
       jobId: 'job-1',
@@ -148,7 +148,7 @@ describe('uploadManager', () => {
         bytesTotal: 8 * MB,
       }),
     ]);
-    const stored = JSON.parse(localStorage.getItem('moyasser-upload-jobs') ?? '[]');
+    const stored = JSON.parse(localStorage.getItem('Moyasser-upload-jobs') ?? '[]');
     expect(stored[0]).toMatchObject({ stage: 'uploading', progress: 50 });
   });
 
@@ -163,7 +163,7 @@ describe('uploadManager', () => {
     expect(listener).toHaveBeenLastCalledWith([
       expect.objectContaining({ stage: 'done', progress: 100 }),
     ]);
-    expect(localStorage.getItem('moyasser-upload-jobs')).toBe('[]');
+    expect(localStorage.getItem('Moyasser-upload-jobs')).toBe('[]');
     expect(manager.getSnapshot()).toEqual([]);
   });
 
@@ -176,7 +176,7 @@ describe('uploadManager', () => {
     expect(manager.getSnapshot()).toEqual([
       expect.objectContaining({ stage: 'failed', error: 'فشل رفع الفيديو. حاول مرة أخرى' }),
     ]);
-    const stored = JSON.parse(localStorage.getItem('moyasser-upload-jobs') ?? '[]');
+    const stored = JSON.parse(localStorage.getItem('Moyasser-upload-jobs') ?? '[]');
     expect(stored).toHaveLength(1);
     expect(stored[0].stage).toBe('failed');
   });
@@ -189,7 +189,7 @@ describe('uploadManager', () => {
 
     expect(mocks.sendMessage).toHaveBeenCalledWith({ type: 'upload-cancel', jobId: 'job-1' });
     expect(mocks.cancelVideoUploadSession).toHaveBeenCalledWith('lesson-1', 'video-new-1');
-    expect(localStorage.getItem('moyasser-upload-jobs')).toBe('[]');
+    expect(localStorage.getItem('Moyasser-upload-jobs')).toBe('[]');
     expect(manager.getSnapshot()).toEqual([]);
   });
 
@@ -223,7 +223,7 @@ describe('uploadManager', () => {
     await vi.waitFor(() => {
       expect(manager.getSnapshot()).toEqual([]);
     });
-    expect(localStorage.getItem('moyasser-upload-jobs')).toBe('[]');
+    expect(localStorage.getItem('Moyasser-upload-jobs')).toBe('[]');
   });
 
   it('marks the fallback job failed and keeps it when TUS throws', async () => {
@@ -236,14 +236,14 @@ describe('uploadManager', () => {
         expect.objectContaining({ stage: 'failed', error: 'فشل رفع الفيديو. حاول مرة أخرى' }),
       ]);
     });
-    const stored = JSON.parse(localStorage.getItem('moyasser-upload-jobs') ?? '[]');
+    const stored = JSON.parse(localStorage.getItem('Moyasser-upload-jobs') ?? '[]');
     expect(stored[0].stage).toBe('failed');
   });
 
   it('reconciles jobs finished while away on resumeOnLoad', async () => {
     mocks.isSupported.mockReturnValue(true);
     localStorage.setItem(
-      'moyasser-upload-jobs',
+      'Moyasser-upload-jobs',
       JSON.stringify([
         {
           jobId: 'job-1',

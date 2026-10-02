@@ -1,8 +1,10 @@
 -- =====================================================================
 -- 01_schema.sql — schema & constraint assertions
--- Covers IMPLEMENTATION-PLAN.md section 6.1: 21 tables (18 + lesson_comments
--- from 0030 + lesson_boards from 0036 + 2 financial from 0043), 8 enums, columns, CHECK / UNIQUE /
--- partial-unique / FK rules, RLS enabled + FORCEd, 5 views (SECURITY
+-- Covers IMPLEMENTATION-PLAN.md section 6.1: 24 tables (18 + lesson_comments
+-- from 0030 + lesson_boards from 0036 + 2 financial from 0043 +
+-- announcements from 0049 + student_sessions/student_activity_events from
+-- 0055), 8 enums, columns, CHECK / UNIQUE /
+-- partial-unique / FK rules, RLS enabled + FORCEd, 7 views (SECURITY
 -- INVOKER), trigger inventory, storage buckets, B1 ownership, B2
 -- notification grants.
 -- The four subscription tables (pricing_plans / subscriptions /
@@ -10,17 +12,18 @@
 -- enum must NOT exist after 0028.
 -- =====================================================================
 
--- --- 21 application tables exist -------------------------------------
+-- --- 24 application tables exist -------------------------------------
 SELECT tests.assert(
-    (SELECT count(*) = 21 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    (SELECT count(*) = 24 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relkind = 'r'
        AND c.relname IN ('profiles','grades','units','lessons',
                          'lesson_videos','lesson_pdfs','progress','notifications',
                          'audit_logs','app_settings',
                          'unit_pricing','unit_codes','unit_purchases',
                          'exams','exam_questions','exam_attempts','exam_answers',
-                         'lesson_comments','lesson_boards','platform_expenses','platform_payouts')),
-    'all 21 application tables exist (18 + lesson_comments + lesson_boards + 2 financial ledgers 0043)');
+                         'lesson_comments','lesson_boards','platform_expenses','platform_payouts',
+                         'announcements','student_sessions','student_activity_events')),
+    'all 24 application tables exist (18 + lesson_comments + lesson_boards + 2 financial ledgers 0043 + announcements 0049 + 2 presence 0055)');
 
 -- --- the four legacy subscription tables are GONE ---------------------
 SELECT tests.assert(
@@ -95,21 +98,21 @@ SELECT tests.assert(
     (SELECT to_regtype('public.subscription_status') IS NULL),
     'subscription_status enum does NOT exist (0028 step 13)');
 
--- --- RLS enabled + FORCEd on all 21 tables ----------------------------
+-- --- RLS enabled + FORCEd on all 24 tables ----------------------------
 SELECT tests.assert(
-    (SELECT count(*) = 21
+    (SELECT count(*) = 24
      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
      WHERE n.nspname = 'public' AND c.relkind = 'r'
        AND c.relrowsecurity AND c.relforcerowsecurity),
-    'RLS enabled AND forced on all 21 tables');
+    'RLS enabled AND forced on all 24 tables');
 
 -- --- expected columns present ----------------------------------------
 SELECT tests.assert(
     (SELECT array_agg(column_name ORDER BY column_name)::text[] = ARRAY[
         'address','created_at','deleted_at','full_name','grade_id','guardian_phone',
-        'id','phone','role','status','updated_at']::text[]
+        'id','phone','role','status','suspension_reason','updated_at']::text[]
      FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'profiles'),
-    'profiles has exactly the documented columns');
+    'profiles has exactly the documented columns (incl. suspension_reason 0069)');
 
 SELECT tests.assert(
     (SELECT count(*) = 0 FROM information_schema.columns
@@ -336,12 +339,13 @@ SELECT tests.assert(
        AND pg_get_constraintdef(c.oid) LIKE '%REFERENCES lessons%' AND pg_get_constraintdef(c.oid) LIKE '%ON DELETE CASCADE%'),
     'lesson_videos.lesson_id -> lessons CASCADE');
 
--- --- 5 views, all SECURITY INVOKER; v_active_subscriptions GONE -------
+-- --- 7 views, all SECURITY INVOKER; v_active_subscriptions GONE -------
 SELECT tests.assert(
-    (SELECT count(*) = 5 FROM information_schema.views WHERE table_schema = 'public'
+    (SELECT count(*) = 7 FROM information_schema.views WHERE table_schema = 'public'
      AND table_name IN ('v_lesson_access','v_student_progress_summary',
-                        'v_lesson_stats','v_dashboard_metrics','v_audit_log')),
-    'all 5 views exist');
+                        'v_lesson_stats','v_dashboard_metrics','v_audit_log',
+                        'v_online_students','v_student_activity_summary')),
+    'all 7 views exist (5 + v_online_students/v_student_activity_summary 0055)');
 
 SELECT tests.assert(
     (SELECT to_regclass('public.v_active_subscriptions') IS NULL),
@@ -350,9 +354,9 @@ SELECT tests.assert(
 -- PG views are SECURITY INVOKER by default (no SECURITY DEFINER views, L5);
 -- the previous information_schema.security_type column does not exist in PG.
 SELECT tests.assert(
-    (SELECT count(*) = 5 FROM information_schema.views
+    (SELECT count(*) = 7 FROM information_schema.views
      WHERE table_schema = 'public' AND table_name LIKE 'v_%'),
-    'all 5 views are SECURITY INVOKER (L5)');
+    'all 7 views are SECURITY INVOKER (L5)');
 
 SELECT tests.assert(
     (SELECT count(*) = 0 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace

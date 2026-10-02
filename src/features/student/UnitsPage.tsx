@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   PackageOpen,
@@ -25,18 +25,23 @@ import { RedeemCodeForm } from '../../components/RedeemCodeForm';
 import { Skeleton } from '../../components/Skeleton';
 import { StudentNav } from '../../components/StudentNav';
 import { UnitCard } from '../../components/UnitCard';
+import { VoucherRedeemOption, voucherValidityLabel } from '../../components/VoucherRedeemOption';
 import { WhatsAppIcon } from '../../components/WhatsAppIcon';
 import { useToast } from '../../components/Toast';
 import { copyText } from '../../lib/clipboard';
 import { buildWhatsAppLink } from '../../lib/format';
 import {
+  getMyStreak,
   getMyUnitPurchases,
   getPublicSettings,
   getPublicUnitPrices,
+  listMyProgress,
   listUnitsForGrade,
   redeemUnitCode,
 } from '../../data/rpc';
 import type {
+  MyStreak,
+  Progress,
   PublicSettings,
   PublicUnitPrice,
   Unit,
@@ -81,6 +86,9 @@ export function UnitsPage() {
   const [redeemByUnit, setRedeemByUnit] = useState<Record<string, { busy: boolean; error: string | null }>>({});
   const [error, setError] = useState(false);
   const [walletCopied, setWalletCopied] = useState(false);
+  const [progressRows, setProgressRows] = useState<Progress[]>([]);
+  const [streak, setStreak] = useState<MyStreak | null>(null);
+  const [generalVoucherChecked, setGeneralVoucherChecked] = useState(false);
 
   const load = useCallback(async () => {
     setError(false);
@@ -90,11 +98,15 @@ export function UnitsPage() {
         getMyUnitPurchases(),
         getPublicUnitPrices(),
         getPublicSettings(),
+        listMyProgress(),
+        getMyStreak(),
       ]);
       const unitsResult = settled[0].status === 'fulfilled' ? settled[0].value : [];
       const purchasesResult = settled[1].status === 'fulfilled' ? settled[1].value : [];
       const pricesResult = settled[2].status === 'fulfilled' ? settled[2].value : [];
       const settingsResult = settled[3].status === 'fulfilled' ? (settled[3].value as PublicSettings | null) : null;
+      const progressResult = settled[4].status === 'fulfilled' ? (settled[4].value as Progress[]) : [];
+      const streakResult = settled[5].status === 'fulfilled' ? (settled[5].value as MyStreak) : null;
 
       if (settled[0].status === 'rejected' || settled[1].status === 'rejected') {
         // units or purchases are critical — show error if both failed, but still render what we have
@@ -107,6 +119,8 @@ export function UnitsPage() {
       setUnits(unitsResult.filter((unit) => unit.status === 'published'));
       setPurchases(purchasesResult);
       setPrices(pricesResult);
+      setProgressRows(progressResult);
+      setStreak(streakResult);
       if (settingsResult) setSettings(settingsResult);
     } catch {
       setError(true);
@@ -117,19 +131,39 @@ export function UnitsPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const handler = () => {
+      listMyProgress()
+        .then((rows) => setProgressRows(rows))
+        .catch(() => {
+          // best-effort
+        });
+    };
+    window.addEventListener('lesson-progress-updated', handler);
+    return () => window.removeEventListener('lesson-progress-updated', handler);
+  }, []);
+
   const priceById = new Map(prices.map((price) => [price.unit_id, price]));
   const purchasedUnitIds = new Set(purchases.map((purchase) => purchase.unit_id));
   const isFreeUnit = (unitId: string) => priceById.get(unitId)?.is_free === true;
   const freeUnits = (units ?? []).filter((unit) => !purchasedUnitIds.has(unit.id) && isFreeUnit(unit.id));
   const lockedUnits = (units ?? []).filter((unit) => !purchasedUnitIds.has(unit.id) && !isFreeUnit(unit.id));
   const purchasedUnits = (units ?? []).filter((unit) => purchasedUnitIds.has(unit.id));
+  // Fix #13 — ملخص تقدم: دروس مكتملة من إجمالي التقدم المسجل.
+  const completedCount = progressRows.filter((p) => p.is_completed).length;
+  const startedCount = progressRows.filter((p) => !p.is_completed && Number(p.percent_completed) > 0).length;
+  const progressTotal = progressRows.length;
 
-  const handleRedeem = async (code: string): Promise<boolean> => {
+  const voucherGranted = streak?.voucher.status === 'granted';
+  const voucherValidity = voucherValidityLabel(streak?.voucher.expires_at);
+
+  const handleRedeem = async (code: string, useVoucher = false): Promise<boolean> => {
     setRedeemError(null);
     setRedeemBusy(true);
     try {
-      await redeemUnitCode(code);
-      showToast('تم تفعيل الوحدة بنجاح');
+      await redeemUnitCode(code, useVoucher);
+      showToast(useVoucher ? 'تم تفعيل الوحدة مع إعفاء رسوم المنصة' : 'تم تفعيل الوحدة بنجاح');
+      setGeneralVoucherChecked(false);
       await load();
       return true;
     } catch (err) {
@@ -140,11 +174,11 @@ export function UnitsPage() {
     }
   };
 
-  const handleRedeemUnit = async (unitId: string, code: string): Promise<boolean> => {
+  const handleRedeemUnit = async (unitId: string, code: string, useVoucher = false): Promise<boolean> => {
     setRedeemByUnit((prev) => ({ ...prev, [unitId]: { busy: true, error: null } }));
     try {
-      await redeemUnitCode(code);
-      showToast('تم تفعيل الوحدة بنجاح');
+      await redeemUnitCode(code, useVoucher);
+      showToast(useVoucher ? 'تم تفعيل الوحدة مع إعفاء رسوم المنصة' : 'تم تفعيل الوحدة بنجاح');
       await load();
       setRedeemByUnit((prev) => ({ ...prev, [unitId]: { busy: false, error: null } }));
       return true;
@@ -181,6 +215,43 @@ export function UnitsPage() {
             </Button>
           }
         />
+
+        {/* Fix #13 — ملخص تقدم سريع */}
+        {!error && units !== null && profile?.grade_id ? (
+          <GridCard data-testid="units-progress-summary">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="font-display text-base font-bold text-foreground">ملخص تقدمك</h2>
+                <p className="mt-0.5 text-sm text-foreground-muted">
+                  {completedCount} درسًا مكتملًا
+                  {startedCount > 0 ? ` · ${startedCount} قيد المشاهدة` : ''}
+                  {progressTotal === 0 ? ' — ابدأ أول درس من المنهج' : ''}
+                </p>
+              </div>
+              <Link
+                to="/student/curriculum"
+                className="text-sm font-medium text-primary-strong hover:underline"
+              >
+                متابعة المنهج
+              </Link>
+            </div>
+            {progressTotal > 0 ? (
+              <div className="mt-3 h-2 overflow-hidden rounded-full bg-surface-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-[width] duration-500"
+                  style={{
+                    width: `${Math.round((completedCount / progressTotal) * 100)}%`,
+                  }}
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={progressTotal}
+                  aria-valuenow={completedCount}
+                  aria-label="ملخص تقدم الوحدات"
+                />
+              </div>
+            ) : null}
+          </GridCard>
+        ) : null}
 
         {error ? (
           <ErrorState message="تعذر تحميل الوحدات" onRetry={() => void load()} />
@@ -249,7 +320,7 @@ export function UnitsPage() {
                 <div className="flex items-center justify-between gap-3 mb-4">
                   <h2 className="font-display text-lg font-bold text-foreground">
                     وحدات مجانية
-                    <span className="ms-2 text-sm font-normal text-emerald-300">مجاني — متاحة بدون كود</span>
+                    <span className="ms-2 text-sm font-normal text-success">مجاني — متاحة بدون كود</span>
                     <span className="ms-2 text-sm font-normal text-foreground-muted">({freeUnits.length})</span>
                   </h2>
                 </div>
@@ -296,9 +367,15 @@ export function UnitsPage() {
                         gradeName={price?.grade_name}
                         whatsappNumber={settings?.whatsapp_number ?? null}
                         whatsappMessage={`${settings?.whatsapp_default_message ?? ''} — وحدة ${unit.name}`}
-                        onRedeem={(code) => handleRedeemUnit(unit.id, code)}
+                        onRedeem={(code, useVoucher) => handleRedeemUnit(unit.id, code, useVoucher)}
                         redeemBusy={redeemByUnit[unit.id]?.busy ?? false}
                         redeemError={redeemByUnit[unit.id]?.error ?? null}
+                        voucher={{
+                          available: voucherGranted,
+                          waivedFee: price?.platform_fee ?? null,
+                          validityLabel: voucherValidity,
+                        }}
+                        voucherTestId={`voucher-redeem-${unit.id}`}
                       />
                     );
                   })}
@@ -307,7 +384,7 @@ export function UnitsPage() {
             ) : null}
 
             {/* Redeem Code Section */}
-            <GridCard className="glass-accent-border">
+            <GridCard>
               <div className="flex items-center gap-3 mb-4">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary-soft text-primary">
                   <KeyRound className="h-5 w-5" />
@@ -318,7 +395,7 @@ export function UnitsPage() {
                 </div>
               </div>
 
-              <div className="mb-5 rounded-xl border border-white/10 bg-white/[0.04] p-4">
+              <div className="mb-5 rounded-xl border border-border bg-surface-muted p-4">
                 <h4 className="flex items-center gap-2 font-display text-sm font-bold text-foreground">
                   <Receipt className="h-4 w-4 text-primary" />
                   طريقة الحصول على كود التفعيل
@@ -329,7 +406,7 @@ export function UnitsPage() {
                   <span className="font-mono font-semibold text-foreground">MYSR-XXXX</span> مباشرة.
                 </p>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3">
+                  <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground-muted">
                       <Wallet className="h-3.5 w-3.5" />
                       تحويل على المحفظة
@@ -348,7 +425,7 @@ export function UnitsPage() {
                             window.setTimeout(() => setWalletCopied(false), 2000);
                           }
                         }}
-                        className="inline-flex h-8 items-center gap-1 rounded-md border border-white/12 bg-white/5 px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-surface px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                       >
                         {walletCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
                         {walletCopied ? 'تم النسخ' : 'نسخ'}
@@ -362,7 +439,7 @@ export function UnitsPage() {
                       {WALLET_NUMBER}
                     </a>
                   </div>
-                  <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-3">
+                  <div className="flex flex-col gap-2 rounded-lg border border-border bg-surface p-3">
                     <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground-muted">
                       <CreditCard className="h-3.5 w-3.5" />
                       تحويل عبر إنستاباي
@@ -381,15 +458,15 @@ export function UnitsPage() {
                       href={INSTAPAY_URL}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex w-fit items-center gap-1 rounded-md border border-white/12 bg-white/5 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-white/10"
+                      className="inline-flex w-fit items-center gap-1 rounded-md border border-border bg-surface px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-surface-muted"
                     >
                       <ExternalLink className="h-3.5 w-3.5" />
                       فتح رابط إنستاباي
                     </a>
                   </div>
                 </div>
-                <div className="mt-4 flex flex-col gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="flex items-center gap-2 text-sm font-medium text-emerald-100">
+                <div className="mt-4 flex flex-col gap-3 rounded-lg border border-[rgba(127,191,142,0.25)] bg-[rgba(127,191,142,0.08)] p-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="flex items-center gap-2 text-sm font-medium text-success">
                     <Send className="h-4 w-4 shrink-0" />
                     بعد التحويل، أرسل الإيصال على واتساب ليصلك الكود
                   </p>
@@ -416,8 +493,18 @@ export function UnitsPage() {
                 </p>
               </div>
 
+              {voucherGranted ? (
+                <div className="mb-3">
+                  <VoucherRedeemOption
+                    testId="voucher-redeem-general"
+                    validityLabel={voucherValidity}
+                    checked={generalVoucherChecked}
+                    onChange={setGeneralVoucherChecked}
+                  />
+                </div>
+              ) : null}
               <RedeemCodeForm
-                onSubmit={(code) => handleRedeem(code)}
+                onSubmit={(code) => handleRedeem(code, voucherGranted && generalVoucherChecked)}
                 busy={redeemBusy}
                 error={redeemError}
                 onSuccess={() => setRedeemError(null)}
