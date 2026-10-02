@@ -1,4 +1,4 @@
-const dateTimeFormatter = new Intl.DateTimeFormat('ar-EG', {
+﻿const dateTimeFormatter = new Intl.DateTimeFormat('ar-EG', {
   dateStyle: 'medium',
   timeStyle: 'short',
 });
@@ -68,3 +68,4 @@ export function buildWhatsAppLink(numberValue: string, defaultMessage?: string |
   const text = defaultMessage ? `?text=${encodeURIComponent(defaultMessage)}` : '';
   return `https://wa.me/${digits}${text}`;
 }
+

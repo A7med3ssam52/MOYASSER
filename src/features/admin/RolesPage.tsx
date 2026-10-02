@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 
 import { AdminNav } from '../../components/AdminNav';
 import { Badge, type BadgeVariant } from '../../components/Badge';
@@ -200,3 +200,4 @@ export function RolesPage() {
     </LayoutShell>
   );
 }
+

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, Search } from 'lucide-react';
 
 import { AdminNav } from '../../components/AdminNav';
@@ -385,3 +385,4 @@ export function AuditLogPage() {
     </LayoutShell>
   );
 }
+

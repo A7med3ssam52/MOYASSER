@@ -1,6 +1,17 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 
-import { isValidEgyptianPhone, normalizePhone, toCanonicalPhone } from './validation';
+import { isValidEgyptianPhone, normalizePhone, toCanonicalPhone, validateArabicFullName, validateRegister, type RegisterFormValues } from './validation';
+
+const validRegister: RegisterFormValues = {
+  fullName: 'أحمد محمد علي',
+  email: 'new@example.com',
+  phone: '01001234567',
+  guardianPhone: '01112345678',
+  address: 'القاهرة',
+  gradeId: 'grade-1',
+  password: 'secret123',
+  confirmPassword: 'secret123',
+};
 
 describe('normalizePhone', () => {
   it('strips spaces, dashes and dots', () => {
@@ -79,5 +90,40 @@ describe('toCanonicalPhone', () => {
 
   it('converts the 0020 prefix to +20', () => {
     expect(toCanonicalPhone('00201012345678')).toBe('+201012345678');
+  });
+});
+
+describe('validateArabicFullName', () => {
+  it('accepts three or more Arabic parts', () => {
+    expect(validateArabicFullName('أحمد محمد علي')).toBeNull();
+    expect(validateArabicFullName('  أحمد   محمد   علي  إبراهيم ')).toBeNull();
+  });
+
+  it('rejects empty and single/double names', () => {
+    expect(validateArabicFullName('')).toBe('الاسم الكامل مطلوب');
+    expect(validateArabicFullName('أحمد')).toMatch(/ثلاثيًا/);
+    expect(validateArabicFullName('أحمد محمد')).toMatch(/ثلاثيًا/);
+  });
+
+  it('rejects non-Arabic parts', () => {
+    expect(validateArabicFullName('أحمد Mohamed علي')).toMatch(/العربية/);
+    expect(validateArabicFullName('أحمد محمد 123')).toMatch(/العربية/);
+    expect(validateArabicFullName('أحمد-محمد علي حسن')).toMatch(/العربية/);
+  });
+});
+
+describe('validateRegister phone uniqueness', () => {
+  it('accepts different student and guardian phones', () => {
+    expect(validateRegister(validRegister)).toEqual({});
+  });
+
+  it('rejects identical phones in the same form', () => {
+    const errors = validateRegister({ ...validRegister, guardianPhone: '01001234567' });
+    expect(errors.guardianPhone).toBe('رقم ولي الأمر يجب أن يكون مختلفًا عن رقم الطالب');
+  });
+
+  it('rejects identical phones written in different formats', () => {
+    const errors = validateRegister({ ...validRegister, guardianPhone: '+201001234567' });
+    expect(errors.guardianPhone).toBe('رقم ولي الأمر يجب أن يكون مختلفًا عن رقم الطالب');
   });
 });

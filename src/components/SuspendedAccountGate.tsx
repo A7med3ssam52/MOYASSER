@@ -1,4 +1,4 @@
-import { Outlet } from 'react-router-dom';
+﻿import { Outlet } from 'react-router-dom';
 
 import { useAuth } from '../features/auth/AuthContext';
 import { SuspendedAccountBlock } from './SuspendedAccountBlock';
@@ -18,3 +18,4 @@ export function SuspendedAccountGate() {
   }
   return <Outlet />;
 }
+

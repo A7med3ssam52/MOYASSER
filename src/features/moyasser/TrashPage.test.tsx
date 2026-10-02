@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+﻿import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -47,9 +47,11 @@ describe('TrashPage', () => {
   });
 
   it('shows an empty state when there is nothing to restore', async () => {
-    mockState.profiles = [makeProfile({ id: 'user-moyasser-1', role: 'mr_moyasser' })];
+    mockState.profiles = [makeProfile({ id: 'user-Moyasser-1', role: 'mr_moyasser' })];
     renderApp('/moyasser/students/trash');
 
     expect(await screen.findByText('سلة المحذوفات فارغة')).toBeInTheDocument();
   });
 });
+
+

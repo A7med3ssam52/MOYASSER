@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Upload manager singleton — owns the job lifecycle and bridges the service
  * worker with the UI. Persists job meta (never the File) in localStorage, and
  * keeps a screen wake lock while any job is active so mobile uploads survive
@@ -47,7 +47,7 @@ export interface SwJobsSnapshot {
   jobs: SwJobSummary[];
 }
 
-const STORAGE_KEY = 'moyasser-upload-jobs';
+const STORAGE_KEY = 'Moyasser-upload-jobs';
 const JOB_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILED_ERROR_MESSAGE = 'فشل رفع الفيديو. حاول مرة أخرى';
 

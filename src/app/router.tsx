@@ -1,64 +1,92 @@
-import { lazy, Suspense } from 'react';
+﻿import { Suspense } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 
 import { GuestOnly, ProtectedRoute, RoleGuard } from '../components/guards';
+import { ProfileCompletionGate } from '../components/ProfileCompletionGate';
 import { Spinner } from '../components/Spinner';
 import { SuspendedAccountGate } from '../components/SuspendedAccountGate';
+import { useAuth } from '../features/auth/AuthContext';
 import { ErrorBoundary } from './ErrorBoundary';
+import { lazyWithRetry } from './lazyWithRetry';
 
 // Public — lazy for code splitting (Landing excludes hls.js chunk)
-const LandingPage = lazy(() => import('../features/public/LandingPage').then((m) => ({ default: m.LandingPage })));
-const AboutPage = lazy(() => import('../features/public/AboutPage').then((m) => ({ default: m.AboutPage })));
-const HowItWorksPage = lazy(() => import('../features/public/HowItWorksPage').then((m) => ({ default: m.HowItWorksPage })));
-const SubjectsPage = lazy(() => import('../features/public/SubjectsPage').then((m) => ({ default: m.SubjectsPage })));
-const GradeLandingPage = lazy(() => import('../features/public/GradeLandingPage').then((m) => ({ default: m.GradeLandingPage })));
-const PricingPublicPage = lazy(() => import('../features/public/PricingPublicPage').then((m) => ({ default: m.PricingPublicPage })));
-const FaqPage = lazy(() => import('../features/public/FaqPage').then((m) => ({ default: m.FaqPage })));
-const ContactPage = lazy(() => import('../features/public/ContactPage').then((m) => ({ default: m.ContactPage })));
-const PrivacyPage = lazy(() => import('../features/public/PrivacyPage').then((m) => ({ default: m.PrivacyPage })));
-const TermsPage = lazy(() => import('../features/public/TermsPage').then((m) => ({ default: m.TermsPage })));
-const NotFoundPage = lazy(() => import('../features/public/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
+const LandingPage = lazyWithRetry(() => import('../features/public/LandingPage').then((m) => ({ default: m.LandingPage })));
+const AboutPage = lazyWithRetry(() => import('../features/public/AboutPage').then((m) => ({ default: m.AboutPage })));
+const HowItWorksPage = lazyWithRetry(() => import('../features/public/HowItWorksPage').then((m) => ({ default: m.HowItWorksPage })));
+const SubjectsPage = lazyWithRetry(() => import('../features/public/SubjectsPage').then((m) => ({ default: m.SubjectsPage })));
+const GradeLandingPage = lazyWithRetry(() => import('../features/public/GradeLandingPage').then((m) => ({ default: m.GradeLandingPage })));
+const PricingPublicPage = lazyWithRetry(() => import('../features/public/PricingPublicPage').then((m) => ({ default: m.PricingPublicPage })));
+const FaqPage = lazyWithRetry(() => import('../features/public/FaqPage').then((m) => ({ default: m.FaqPage })));
+const ContactPage = lazyWithRetry(() => import('../features/public/ContactPage').then((m) => ({ default: m.ContactPage })));
+const PrivacyPage = lazyWithRetry(() => import('../features/public/PrivacyPage').then((m) => ({ default: m.PrivacyPage })));
+const TermsPage = lazyWithRetry(() => import('../features/public/TermsPage').then((m) => ({ default: m.TermsPage })));
+const NotFoundPage = lazyWithRetry(() => import('../features/public/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
+const LabsExamPage = lazyWithRetry(() => import('../features/labs/LabsExamPage').then((m) => ({ default: m.LabsExamPage })));
+const LabsRedesignPage = lazyWithRetry(() => import('../features/labs/LabsRedesignPage').then((m) => ({ default: m.LabsRedesignPage })));
+const NewUiPage = lazyWithRetry(() => import('../features/labs/NewUiPage').then((m) => ({ default: m.NewUiPage })));
+const CurriLabsPage = lazyWithRetry(() => import('../features/labs/CurriLabsPage').then((m) => ({ default: m.CurriLabsPage })));
+const FunLabsPage = lazyWithRetry(() => import('../features/labs/FunLabsPage').then((m) => ({ default: m.FunLabsPage })));
+const AuthLabsGallery = lazyWithRetry(() =>
+  import('../features/labs/auth/AuthLabsGallery').then((m) => ({ default: m.AuthLabsGallery })),
+);
+const LabsLogin1 = lazyWithRetry(() => import('../features/labs/auth/variant1').then((m) => ({ default: m.Login1 })));
+const LabsRegister1 = lazyWithRetry(() => import('../features/labs/auth/variant1').then((m) => ({ default: m.Register1 })));
+const LabsLogin2 = lazyWithRetry(() => import('../features/labs/auth/variant2').then((m) => ({ default: m.Login2 })));
+const LabsRegister2 = lazyWithRetry(() => import('../features/labs/auth/variant2').then((m) => ({ default: m.Register2 })));
+const LabsLogin3 = lazyWithRetry(() => import('../features/labs/auth/variant3').then((m) => ({ default: m.Login3 })));
+const LabsRegister3 = lazyWithRetry(() => import('../features/labs/auth/variant3').then((m) => ({ default: m.Register3 })));
+const LabsLogin4 = lazyWithRetry(() => import('../features/labs/auth/variant4').then((m) => ({ default: m.Login4 })));
+const LabsRegister4 = lazyWithRetry(() => import('../features/labs/auth/variant4').then((m) => ({ default: m.Register4 })));
+const LabsLogin5 = lazyWithRetry(() => import('../features/labs/auth/variant5').then((m) => ({ default: m.Login5 })));
+const LabsRegister5 = lazyWithRetry(() => import('../features/labs/auth/variant5').then((m) => ({ default: m.Register5 })));
 
 // Auth — keep lazy too but small
-const LoginPage = lazy(() => import('../features/auth/LoginPage').then((m) => ({ default: m.LoginPage })));
-const RegisterPage = lazy(() => import('../features/auth/RegisterPage').then((m) => ({ default: m.RegisterPage })));
+const LoginPage = lazyWithRetry(() => import('../features/auth/LoginPage').then((m) => ({ default: m.LoginPage })));
+const RegisterPage = lazyWithRetry(() => import('../features/auth/RegisterPage').then((m) => ({ default: m.RegisterPage })));
 
 // Student
-const StudentDashboardPage = lazy(() => import('../features/student/StudentDashboardPage').then((m) => ({ default: m.StudentDashboardPage })));
-const StudentProfilePage = lazy(() => import('../features/student/StudentProfilePage').then((m) => ({ default: m.StudentProfilePage })));
-const StudentChangePasswordPage = lazy(() => import('../features/student/StudentChangePasswordPage').then((m) => ({ default: m.StudentChangePasswordPage })));
-const UnitsPage = lazy(() => import('../features/student/UnitsPage').then((m) => ({ default: m.UnitsPage })));
-const StudentCurriculumPage = lazy(() => import('../features/student/StudentCurriculumPage').then((m) => ({ default: m.StudentCurriculumPage })));
-const StudentLessonPage = lazy(() => import('../features/student/StudentLessonPage').then((m) => ({ default: m.StudentLessonPage })));
-const StudentNotificationsPage = lazy(() => import('../features/student/StudentNotificationsPage').then((m) => ({ default: m.StudentNotificationsPage })));
-const StudentPresenceGate = lazy(() =>
+const StudentDashboardPage = lazyWithRetry(() => import('../features/student/StudentDashboardPage').then((m) => ({ default: m.StudentDashboardPage })));
+const StudentProfilePage = lazyWithRetry(() => import('../features/student/StudentProfilePage').then((m) => ({ default: m.StudentProfilePage })));
+const StudentChangePasswordPage = lazyWithRetry(() => import('../features/student/StudentChangePasswordPage').then((m) => ({ default: m.StudentChangePasswordPage })));
+const UnitsPage = lazyWithRetry(() => import('../features/student/UnitsPage').then((m) => ({ default: m.UnitsPage })));
+const StudentCurriculumPage = lazyWithRetry(() => import('../features/student/StudentCurriculumPage').then((m) => ({ default: m.StudentCurriculumPage })));
+const StudentLessonPage = lazyWithRetry(() => import('../features/student/StudentLessonPage').then((m) => ({ default: m.StudentLessonPage })));
+const GeneralExamsListPage = lazyWithRetry(() => import('../features/student/GeneralExamsListPage').then((m) => ({ default: m.GeneralExamsListPage })));
+const GeneralExamTakePage = lazyWithRetry(() => import('../features/student/GeneralExamTakePage').then((m) => ({ default: m.GeneralExamTakePage })));
+const StudentNotificationsPage = lazyWithRetry(() => import('../features/student/StudentNotificationsPage').then((m) => ({ default: m.StudentNotificationsPage })));
+const StudentSuggestionsPage = lazyWithRetry(() => import('../features/student/StudentSuggestionsPage').then((m) => ({ default: m.StudentSuggestionsPage })));
+const StudentPresenceGate = lazyWithRetry(() =>
   import('../features/student/StudentPresenceGate').then((m) => ({ default: m.StudentPresenceGate })),
 );
 
 // Moyasser / Teacher
-const MoyasserDashboardPage = lazy(() => import('../features/moyasser/MoyasserDashboardPage').then((m) => ({ default: m.MoyasserDashboardPage })));
-const ReportsPage = lazy(() => import('../features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })));
-const StudentListPage = lazy(() => import('../features/moyasser/StudentListPage').then((m) => ({ default: m.StudentListPage })));
-const TrashPage = lazy(() => import('../features/moyasser/TrashPage').then((m) => ({ default: m.TrashPage })));
-const StudentDetailPage = lazy(() => import('../features/moyasser/StudentDetailPage').then((m) => ({ default: m.StudentDetailPage })));
-const GradesPage = lazy(() => import('../features/moyasser/GradesPage').then((m) => ({ default: m.GradesPage })));
-const CurriculumPage = lazy(() => import('../features/moyasser/CurriculumPage').then((m) => ({ default: m.CurriculumPage })));
-const CurriculumUnitsPage = lazy(() => import('../features/moyasser/CurriculumUnitsPage').then((m) => ({ default: m.CurriculumUnitsPage })));
-const CurriculumLessonsPage = lazy(() => import('../features/moyasser/CurriculumLessonsPage').then((m) => ({ default: m.CurriculumLessonsPage })));
-const ExamsPage = lazy(() => import('../features/moyasser/ExamsPage').then((m) => ({ default: m.ExamsPage })));
-const LessonAssetsPage = lazy(() => import('../features/moyasser/LessonAssetsPage').then((m) => ({ default: m.LessonAssetsPage })));
-const PricingPage = lazy(() => import('../features/moyasser/PricingPage').then((m) => ({ default: m.PricingPage })));
-const CodesPage = lazy(() => import('../features/moyasser/CodesPage').then((m) => ({ default: m.CodesPage })));
-const MoyasserAnnouncementsListPage = lazy(() => import('../features/moyasser/AnnouncementsListPage').then((m) => ({ default: m.MoyasserAnnouncementsListPage })));
-const MoyasserAnnouncementFormPage = lazy(() => import('../features/moyasser/AnnouncementFormPage').then((m) => ({ default: m.MoyasserAnnouncementFormPage })));
+const MoyasserDashboardPage = lazyWithRetry(() => import('../features/moyasser/MoyasserDashboardPage').then((m) => ({ default: m.MoyasserDashboardPage })));
+const ReportsPage = lazyWithRetry(() => import('../features/reports/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const StudentListPage = lazyWithRetry(() => import('../features/moyasser/StudentListPage').then((m) => ({ default: m.StudentListPage })));
+const TrashPage = lazyWithRetry(() => import('../features/moyasser/TrashPage').then((m) => ({ default: m.TrashPage })));
+const StudentDetailPage = lazyWithRetry(() => import('../features/moyasser/StudentDetailPage').then((m) => ({ default: m.StudentDetailPage })));
+const GradesPage = lazyWithRetry(() => import('../features/moyasser/GradesPage').then((m) => ({ default: m.GradesPage })));
+const CurriculumPage = lazyWithRetry(() => import('../features/moyasser/CurriculumPage').then((m) => ({ default: m.CurriculumPage })));
+const CurriculumUnitsPage = lazyWithRetry(() => import('../features/moyasser/CurriculumUnitsPage').then((m) => ({ default: m.CurriculumUnitsPage })));
+const CurriculumLessonsPage = lazyWithRetry(() => import('../features/moyasser/CurriculumLessonsPage').then((m) => ({ default: m.CurriculumLessonsPage })));
+const ExamsPage = lazyWithRetry(() => import('../features/moyasser/ExamsPage').then((m) => ({ default: m.ExamsPage })));
+const GeneralExamsPage = lazyWithRetry(() => import('../features/moyasser/GeneralExamsPage').then((m) => ({ default: m.GeneralExamsPage })));
+const GeneralExamDetailPage = lazyWithRetry(() => import('../features/moyasser/GeneralExamDetailPage').then((m) => ({ default: m.GeneralExamDetailPage })));
+const LessonAssetsPage = lazyWithRetry(() => import('../features/moyasser/LessonAssetsPage').then((m) => ({ default: m.LessonAssetsPage })));
+const PricingPage = lazyWithRetry(() => import('../features/moyasser/PricingPage').then((m) => ({ default: m.PricingPage })));
+const CodesPage = lazyWithRetry(() => import('../features/moyasser/CodesPage').then((m) => ({ default: m.CodesPage })));
+const MoyasserAnnouncementsListPage = lazyWithRetry(() => import('../features/moyasser/AnnouncementsListPage').then((m) => ({ default: m.MoyasserAnnouncementsListPage })));
+const MoyasserAnnouncementFormPage = lazyWithRetry(() => import('../features/moyasser/AnnouncementFormPage').then((m) => ({ default: m.MoyasserAnnouncementFormPage })));
 
 // Admin
-const AuditLogPage = lazy(() => import('../features/admin/AuditLogPage').then((m) => ({ default: m.AuditLogPage })));
-const RolesPage = lazy(() => import('../features/admin/RolesPage').then((m) => ({ default: m.RolesPage })));
-const AnnouncementsListPage = lazy(() => import('../features/admin/AnnouncementsListPage').then((m) => ({ default: m.AnnouncementsListPage })));
-const AnnouncementFormPage = lazy(() => import('../features/admin/AnnouncementFormPage').then((m) => ({ default: m.AnnouncementFormPage })));
-const PresencePage = lazy(() => import('../features/admin/PresencePage').then((m) => ({ default: m.PresencePage })));
-const StudentPresenceHistoryPage = lazy(() =>
+const AuditLogPage = lazyWithRetry(() => import('../features/admin/AuditLogPage').then((m) => ({ default: m.AuditLogPage })));
+const AdminNotificationsPage = lazyWithRetry(() => import('../features/admin/AdminNotificationsPage').then((m) => ({ default: m.AdminNotificationsPage })));
+const RolesPage = lazyWithRetry(() => import('../features/admin/RolesPage').then((m) => ({ default: m.RolesPage })));
+const AnnouncementsListPage = lazyWithRetry(() => import('../features/admin/AnnouncementsListPage').then((m) => ({ default: m.AnnouncementsListPage })));
+const AdminSuggestionsPage = lazyWithRetry(() => import('../features/admin/AdminSuggestionsPage').then((m) => ({ default: m.AdminSuggestionsPage })));
+const AnnouncementFormPage = lazyWithRetry(() => import('../features/admin/AnnouncementFormPage').then((m) => ({ default: m.AnnouncementFormPage })));
+const PresencePage = lazyWithRetry(() => import('../features/admin/PresencePage').then((m) => ({ default: m.PresencePage })));
+const StudentPresenceHistoryPage = lazyWithRetry(() =>
   import('../features/admin/StudentPresenceHistoryPage').then((m) => ({ default: m.StudentPresenceHistoryPage })),
 );
 
@@ -68,6 +96,16 @@ function PageFallback() {
       <Spinner label="جاري التحميل" />
     </div>
   );
+}
+
+// Assistant lands on exams (core workspace); other staff land on dashboard.
+// Runs inside the outer /moyasser RoleGuard, so role is already resolved.
+function MoyasserIndexRedirect() {
+  const { role } = useAuth();
+  if (role === 'assistant') {
+    return <Navigate to="/moyasser/exams" replace />;
+  }
+  return <Navigate to="/moyasser/dashboard" replace />;
 }
 
 export function AppRoutes() {
@@ -93,6 +131,23 @@ export function AppRoutes() {
         <Route path="/contact" element={<ContactPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        {/* Labs: interactive demo (noindex, no backend, no persistence) */}
+        <Route path="/labs/exam" element={<LabsExamPage />} />
+        <Route path="/labs/redesign" element={<LabsRedesignPage />} />
+        <Route path="/labs/newui" element={<NewUiPage />} />
+        <Route path="/labs/curri" element={<CurriLabsPage />} />
+        <Route path="/labs/fun" element={<FunLabsPage />} />
+        <Route path="/labs/auth" element={<AuthLabsGallery />} />
+        <Route path="/labs/login1" element={<LabsLogin1 />} />
+        <Route path="/labs/register1" element={<LabsRegister1 />} />
+        <Route path="/labs/login2" element={<LabsLogin2 />} />
+        <Route path="/labs/register2" element={<LabsRegister2 />} />
+        <Route path="/labs/login3" element={<LabsLogin3 />} />
+        <Route path="/labs/register3" element={<LabsRegister3 />} />
+        <Route path="/labs/login4" element={<LabsLogin4 />} />
+        <Route path="/labs/register4" element={<LabsRegister4 />} />
+        <Route path="/labs/login5" element={<LabsLogin5 />} />
+        <Route path="/labs/register5" element={<LabsRegister5 />} />
 
         {/* Auth — noindex */}
         <Route
@@ -116,56 +171,63 @@ export function AppRoutes() {
         <Route element={<ProtectedRoute />}>
           <Route path="/student" element={<RoleGuard allow={['student']} />}>
             <Route element={<SuspendedAccountGate />}>
+              <Route element={<ProfileCompletionGate />}>
+              <Route path="profile" element={<StudentProfilePage />} />
+              <Route path="password" element={<StudentChangePasswordPage />} />
               <Route element={<StudentPresenceGate />}>
                 <Route index element={<Navigate to="/student/dashboard" replace />} />
                 <Route path="dashboard" element={<StudentDashboardPage />} />
-                <Route path="profile" element={<StudentProfilePage />} />
-                <Route path="password" element={<StudentChangePasswordPage />} />
                 <Route path="units" element={<UnitsPage />} />
                 <Route path="curriculum" element={<StudentCurriculumPage />} />
                 <Route path="lessons/:lessonId" element={<StudentLessonPage />} />
+                <Route path="exams" element={<GeneralExamsListPage />} />
+                <Route path="exams/:examId" element={<GeneralExamTakePage />} />
                 <Route path="notifications" element={<StudentNotificationsPage />} />
+                <Route path="suggestions" element={<StudentSuggestionsPage />} />
+              </Route>
               </Route>
             </Route>
           </Route>
-          {/* Staff full access: mr_moyasser / admin / teacher */}
-          <Route path="/moyasser" element={<RoleGuard allow={['mr_moyasser', 'admin', 'teacher']} />}>
-            <Route index element={<Navigate to="/moyasser/dashboard" replace />} />
-            <Route path="dashboard" element={<MoyasserDashboardPage />} />
-            <Route path="reports" element={<ReportsPage />} />
-            <Route path="students" element={<StudentListPage />} />
-            <Route path="students/trash" element={<TrashPage />} />
-            <Route path="students/:studentId" element={<StudentDetailPage />} />
-            <Route path="grades" element={<GradesPage />} />
+          {/* Staff: single /moyasser guard (mr_moyasser / admin / teacher / assistant).
+              A duplicate /moyasser Route here used to redirect-loop assistants
+              (the first guard always won). Restricted pages are nested under
+              an inner staff-only guard instead. */}
+          <Route path="/moyasser" element={<RoleGuard allow={['mr_moyasser', 'admin', 'teacher', 'assistant']} />}>
+            <Route index element={<MoyasserIndexRedirect />} />
+            {/* Assistant-allowed: curriculum (read-only UI) + exams + lesson assets */}
             <Route path="curriculum" element={<CurriculumPage />} />
             <Route path="curriculum/:gradeId" element={<CurriculumUnitsPage />} />
             <Route path="curriculum/:gradeId/:unitId" element={<CurriculumLessonsPage />} />
             <Route path="exams" element={<ExamsPage />} />
+            <Route path="general-exams" element={<GeneralExamsPage />} />
+            <Route path="general-exams/:examId" element={<GeneralExamDetailPage />} />
             <Route path="lessons/:lessonId" element={<LessonAssetsPage />} />
-            <Route path="pricing" element={<PricingPage />} />
-            <Route path="codes" element={<CodesPage />} />
-            <Route path="announcements" element={<MoyasserAnnouncementsListPage />} />
-            <Route path="announcements/new" element={<MoyasserAnnouncementFormPage />} />
-            <Route path="announcements/:id/edit" element={<MoyasserAnnouncementFormPage />} />
-          </Route>
-          {/* Assistant limited: curriculum (read-only) + exams only */}
-          <Route path="/moyasser" element={<RoleGuard allow={['assistant']} />}>
-            <Route index element={<Navigate to="/moyasser/exams" replace />} />
-            <Route path="curriculum" element={<CurriculumPage />} />
-            <Route path="curriculum/:gradeId" element={<CurriculumUnitsPage />} />
-            <Route path="curriculum/:gradeId/:unitId" element={<CurriculumLessonsPage />} />
-            <Route path="exams" element={<ExamsPage />} />
-            <Route path="lessons/:lessonId" element={<LessonAssetsPage />} />
+            {/* Staff-only (no assistant): dashboard/reports/students/grades/pricing/codes/announcements */}
+            <Route element={<RoleGuard allow={['mr_moyasser', 'admin', 'teacher']} />}>
+              <Route path="dashboard" element={<MoyasserDashboardPage />} />
+              <Route path="reports" element={<ReportsPage />} />
+              <Route path="students" element={<StudentListPage />} />
+              <Route path="students/trash" element={<TrashPage />} />
+              <Route path="students/:studentId" element={<StudentDetailPage />} />
+              <Route path="grades" element={<GradesPage />} />
+              <Route path="pricing" element={<PricingPage />} />
+              <Route path="codes" element={<CodesPage />} />
+              <Route path="announcements" element={<MoyasserAnnouncementsListPage />} />
+              <Route path="announcements/new" element={<MoyasserAnnouncementFormPage />} />
+              <Route path="announcements/:id/edit" element={<MoyasserAnnouncementFormPage />} />
+            </Route>
           </Route>
           <Route path="/admin" element={<RoleGuard allow={['admin']} />}>
             <Route index element={<Navigate to="/admin/dashboard" replace />} />
             <Route path="dashboard" element={<MoyasserDashboardPage />} />
+            <Route path="notifications" element={<AdminNotificationsPage />} />
             <Route path="presence" element={<PresencePage />} />
             <Route path="presence/:studentId" element={<StudentPresenceHistoryPage />} />
             <Route path="reports" element={<ReportsPage />} />
             <Route path="audit" element={<AuditLogPage />} />
             <Route path="roles" element={<RolesPage />} />
             <Route path="announcements" element={<AnnouncementsListPage />} />
+            <Route path="suggestions" element={<AdminSuggestionsPage />} />
             <Route path="announcements/new" element={<AnnouncementFormPage />} />
             <Route path="announcements/:id/edit" element={<AnnouncementFormPage />} />
           </Route>
@@ -177,3 +239,4 @@ export function AppRoutes() {
     </ErrorBoundary>
   );
 }
+

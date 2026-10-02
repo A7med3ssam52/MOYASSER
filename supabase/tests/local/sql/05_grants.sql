@@ -93,7 +93,7 @@ SELECT tests.assert(NOT has_function_privilege('anon', 'public.youtube_video_id_
 -- authenticated: the full client allowlist (84 functions = 79 + 5 presence RPCs from 0055)
 -- ---------------------------------------------------------------------
 
-DO $
+DO $$
 DECLARE
     v_count integer;
 BEGIN
@@ -102,7 +102,7 @@ BEGIN
     WHERE pronamespace = 'public'::regnamespace
       AND has_function_privilege('authenticated', oid, 'EXECUTE');
     RAISE NOTICE 'ACTUAL FUNCTION COUNT: %', v_count;
-END $;
+END $$;
 SELECT tests.assert(
     (SELECT count(*) = 84 FROM pg_proc
      WHERE pronamespace = 'public'::regnamespace

@@ -1,4 +1,4 @@
-export function errorMessage(error: unknown): string {
+﻿export function errorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
@@ -7,3 +7,4 @@ export function errorMessage(error: unknown): string {
   }
   return String(error);
 }
+

@@ -1,13 +1,16 @@
-import { fireEvent, screen, within } from '@testing-library/react';
+﻿import { fireEvent, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
   expectRpcCall,
   makeGrade,
+  makeMyStreak,
   makeUnit,
   makeUnitCode,
   makeUnitPricing,
   makeUnitPurchase,
+  makeVoucher,
+  mockRpc,
   mockState,
   resetMockState,
   setAuthenticatedStudent,
@@ -17,7 +20,7 @@ import { renderApp } from '../../test/utils';
 describe('UnitsPage', () => {
   beforeEach(() => {
     resetMockState();
-    setAuthenticatedStudent({ grade_id: 'grade-1' });
+    setAuthenticatedStudent({ avatar_path: 'user-test-1/avatar.jpg', grade_id: 'grade-1' });
     mockState.grades.push(makeGrade({ id: 'grade-1', name: 'الصف الأول' }));
     mockState.units.push(
       makeUnit({ id: 'unit-1', grade_id: 'grade-1', name: 'الوحدة الأولى', status: 'published' }),
@@ -171,7 +174,7 @@ it('shows only published units with the purchased section and open link', async 
     expect(await screen.findByText('لقد قمت بتفعيل هذه الوحدة بالفعل')).toBeInTheDocument();
   });
 
-  it('rejects redeeming when the student account is disabled', async () => {
+  it('locks redeeming when the student account is disabled', async () => {
     mockState.profiles.forEach((profile) => {
       if (profile.id === 'user-test-1') {
         profile.status = 'disabled';
@@ -180,21 +183,72 @@ it('shows only published units with the purchased section and open link', async 
     mockState.unitCodes.push(makeUnitCode({ id: 'code-1', unit_id: 'unit-2' }));
     renderApp('/student/units');
 
+    expect(await screen.findByTestId('suspended-account-block')).toBeInTheDocument();
+    expect(screen.queryByLabelText('كود التفعيل')).not.toBeInTheDocument();
+  });
+
+  it('prompts to set the grade when the student has no grade', async () => {
+    resetMockState();
+    setAuthenticatedStudent({ grade_id: null, avatar_path: 'user-test-1/avatar.jpg' });
+    renderApp('/student/units');
+
+    expect(await screen.findByText(/لم يتم تحديد صفك الدراسي/)).toBeInTheDocument();
+  });
+
+  it('offers the voucher opt-in on the general redeem card and applies it on confirm', async () => {
+    mockRpc(
+      'get_my_streak',
+      makeMyStreak({ voucher: { status: 'granted', expires_at: new Date(Date.now() + 20 * 86_400_000).toISOString() } }),
+    );
+    mockState.streakVouchers.push(makeVoucher());
+    mockState.unitCodes.push(makeUnitCode({ id: 'code-1', unit_id: 'unit-2' }));
+    renderApp('/student/units');
+
+    const option = await screen.findByTestId('voucher-redeem-general');
+    expect(option).toHaveTextContent('استخدام قسيمة الإعفاء');
+    fireEvent.click(screen.getByTestId('voucher-redeem-general-checkbox'));
     fireEvent.change(await screen.findByLabelText('كود التفعيل'), {
       target: { value: 'MYSR-ABCD-EFGH-JKLM' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'تفعيل' }));
 
-    expect(
-      await screen.findByText('ليست لديك صلاحية للتفعيل — تأكد من تفعيل حسابك'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('تم تفعيل الوحدة مع إعفاء رسوم المنصة')).toBeInTheDocument();
+    expect(expectRpcCall('redeem_unit_code')).toEqual({
+      p_code: 'MYSR-ABCD-EFGH-JKLM',
+      p_use_voucher: true,
+    });
   });
 
-  it('prompts to set the grade when the student has no grade', async () => {
-    resetMockState();
-    setAuthenticatedStudent({ grade_id: null });
+  it('hides the voucher opt-in when no voucher is held', async () => {
+    mockState.unitCodes.push(makeUnitCode({ id: 'code-1', unit_id: 'unit-2' }));
     renderApp('/student/units');
 
-    expect(await screen.findByText(/لم يتم تحديد صفك الدراسي/)).toBeInTheDocument();
+    await screen.findByText('الوحدة الثانية');
+    expect(screen.queryByTestId('voucher-redeem-general')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('voucher-redeem-unit-2')).not.toBeInTheDocument();
+  });
+
+  it('applies the voucher from a locked unit card with the waived fee shown', async () => {
+    mockRpc(
+      'get_my_streak',
+      makeMyStreak({ voucher: { status: 'granted', expires_at: new Date(Date.now() + 20 * 86_400_000).toISOString() } }),
+    );
+    mockState.streakVouchers.push(makeVoucher());
+    mockState.unitCodes.push(makeUnitCode({ id: 'code-1', unit_id: 'unit-2' }));
+    renderApp('/student/units');
+
+    const unit2Text = await screen.findByText('الوحدة الثانية');
+    const unit2Card = unit2Text.closest('.glass-card') as HTMLElement;
+    expect(within(unit2Card).getByTestId('voucher-redeem-unit-2')).toHaveTextContent('50');
+    fireEvent.click(within(unit2Card).getByTestId('voucher-redeem-unit-2-checkbox'));
+    fireEvent.change(within(unit2Card).getByLabelText('كود تفعيل الوحدة الثانية'), {
+      target: { value: 'MYSR-ABCD-EFGH-JKLM' },
+    });
+    fireEvent.click(within(unit2Card).getByRole('button', { name: 'تفعيل بالكود' }));
+
+    expect(await screen.findByText('تم تفعيل الوحدة مع إعفاء رسوم المنصة')).toBeInTheDocument();
+    const purchase = mockState.unitPurchases.find((item) => item.unit_id === 'unit-2');
+    expect(purchase?.platform_fee).toBe(0);
   });
 });
+

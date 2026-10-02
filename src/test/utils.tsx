@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react';
+﻿import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -16,3 +16,4 @@ export function renderWithProviders(ui: ReactElement, route = '/') {
 export function renderApp(route = '/') {
   return renderWithProviders(<AppRoutes />, route);
 }
+

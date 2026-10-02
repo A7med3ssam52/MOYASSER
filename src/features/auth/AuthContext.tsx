@@ -1,4 +1,4 @@
-import type { Session, User } from '@supabase/supabase-js';
+﻿import type { Session, User } from '@supabase/supabase-js';
 import {
   createContext,
   useCallback,
@@ -257,3 +257,4 @@ export function useAuth(): AuthContextValue {
   }
   return context;
 }
+

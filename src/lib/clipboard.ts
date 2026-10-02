@@ -1,4 +1,4 @@
-export async function copyText(text: string): Promise<boolean> {
+﻿export async function copyText(text: string): Promise<boolean> {
   if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
     try {
       await navigator.clipboard.writeText(text);

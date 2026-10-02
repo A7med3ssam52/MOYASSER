@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+﻿import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { YouTubeEmbed } from './YouTubeEmbed';
@@ -17,16 +17,32 @@ describe('YouTubeEmbed', () => {
     expect(frame).toHaveAttribute('allowfullscreen', '');
   });
 
-  it('renders with platform player chrome and visual blocking overlays', () => {
+  it('keeps native controls clickable while invisibly blocking navigation to YouTube', () => {
     render(<YouTubeEmbed videoId="dQw4w9WgXcQ" />);
     expect(screen.getByTestId('youtube-embed-wrapper').className).toContain('glass-card');
     const top = screen.getByTestId('youtube-overlay-top');
     const bottom = screen.getByTestId('youtube-overlay-bottom');
     expect(top).toBeInTheDocument();
     expect(bottom).toBeInTheDocument();
-    // quick visual hide: overlays must have solid bg to actually hide branding, not just block clicks
-    expect(top.className).toContain('bg-black');
-    expect(bottom.className).toContain('bg-black');
+    // Invisible interceptors — must never paint black bars over the video.
+    expect(top.className).not.toContain('bg-black');
+    expect(bottom.className).not.toContain('bg-black');
+    expect(top.className).toContain('bg-transparent');
+    expect(bottom.className).toContain('bg-transparent');
+    // Bottom interceptor floats above the control bar with a physical right-
+    // offset (RTL-safe), so play/volume/settings/fullscreen stay clickable.
+    expect(bottom.className).toContain('bottom-[');
+    expect(bottom.className).toContain('right-[');
+    expect(bottom.className).not.toContain('end-[');
+    // Stable layout: fixed 16:9 box on the container, iframe fills it exactly.
+    const frame = screen.getByTestId('youtube-embed');
+    expect(frame.className).toContain('absolute');
+    expect(frame.className).toContain('inset-0');
+    expect(frame.className).toContain('h-full');
+    expect(frame.className).toContain('w-full');
+    const box = frame.parentElement;
+    expect(box?.className).toContain('aspect-video');
+    expect(box?.className).toContain('overflow-hidden');
   });
 
   it('falls back to a default title when none is provided', () => {
@@ -42,3 +58,4 @@ describe('YouTubeEmbed', () => {
     expect(frame.getAttribute('src')).not.toContain('watch?v=');
   });
 });
+

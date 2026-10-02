@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+﻿import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PWA_STORAGE_KEYS } from '../lib/pwa';
@@ -139,3 +139,5 @@ describe('InstallPrompt', () => {
     expect(localStorage.getItem(PWA_STORAGE_KEYS.installed)).toBe('1');
   });
 });
+
+

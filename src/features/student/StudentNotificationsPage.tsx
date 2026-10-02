@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+﻿import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import { Badge } from '../../components/Badge';
@@ -21,11 +21,20 @@ const typeLabels: Record<string, string> = {
   unit_activated: 'تفعيل وحدة',
   new_content: 'محتوى جديد',
   system: 'النظام',
+  subscription_activated: 'تفعيل الاشتراك',
+  subscription_expiring: 'قرب انتهاء الاشتراك',
+  subscription_expired: 'انتهاء الاشتراك',
+  avatar_required: 'الصورة الشخصية',
   exam_submitted: 'إجابة اختبار',
   exam_graded: 'نتيجة اختبار',
   lesson_comment: 'تعليق',
   comment_reply: 'رد على تعليق',
+  suggestion_status: 'حالة مقترح',
+  voucher_granted: 'مكافأة السلسلة',
 };
+
+/** Fallback badge text — never leak a raw English type key to the UI. */
+const UNKNOWN_TYPE_LABEL = 'إشعار';
 
 function NotificationsSkeleton() {
   return (
@@ -82,6 +91,8 @@ export function StudentNotificationsPage() {
       }
       if (notification.entity_type === 'lesson' && notification.entity_id) {
         navigate(`/student/lessons/${notification.entity_id}`);
+      } else if (notification.entity_type === 'suggestion') {
+        navigate('/student/suggestions');
       }
     },
     [navigate, notifications, showToast],
@@ -147,10 +158,10 @@ export function StudentNotificationsPage() {
                 <button
                   type="button"
                   onClick={() => void handleOpen(notification)}
-                  className={`w-full rounded-lg border p-4 text-start transition-all hover:bg-white/6 ${
+                  className={`w-full rounded-lg border border-border p-4 text-start transition-colors hover:bg-surface-muted ${
                     notification.is_read
-                      ? 'glass-tile border-white/12'
-                      : 'bg-gradient-to-br from-primary/[0.13] to-accent/[0.15] border-primary/30 shadow-[0_0_28px_-10px_rgba(99,102,241,0.4)]'
+                      ? 'glass-tile bg-surface'
+                      : 'border-primary/30 bg-primary-soft'
                   }`}
                   data-testid={`notification-${notification.id}`}
                   data-unread={notification.is_read ? 'false' : 'true'}
@@ -174,7 +185,7 @@ export function StudentNotificationsPage() {
                   ) : null}
                   <span className="mt-2 inline-block">
                     <Badge variant="neutral">
-                      {typeLabels[notification.type] ?? notification.type}
+                      {typeLabels[notification.type] ?? UNKNOWN_TYPE_LABEL}
                     </Badge>
                   </span>
                 </button>
@@ -186,3 +197,4 @@ export function StudentNotificationsPage() {
     </LayoutShell>
   );
 }
+

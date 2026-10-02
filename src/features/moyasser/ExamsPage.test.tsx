@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react';
+﻿import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -157,3 +157,5 @@ describe('ExamsPage', () => {
     expect(screen.getByText('النتيجة: 4')).toBeInTheDocument();
   });
 });
+
+

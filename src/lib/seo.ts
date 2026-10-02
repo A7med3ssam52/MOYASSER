@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Central SEO source of truth — single source for titles, descriptions, OG, JSON-LD helpers.
  * Site: https://moyasser.com
  * All titles 50-60 chars, descriptions 145-155 chars, keywords Arabic-first.
@@ -7,29 +7,29 @@
 export const SITE_URL = (import.meta.env.VITE_SITE_URL as string | undefined)?.replace(/\/$/, '') || 'https://moyasser.com';
 
 export const SITE_NAME = 'محمد ياسر';
-export const SITE_ALTERNATE_NAME = 'MOYASSER';
+export const SITE_ALTERNATE_NAME = 'moyasser';
 export const SITE_LOCALE = 'ar_EG';
 export const SITE_LANGUAGE = 'ar';
 export const OG_IMAGE = `${SITE_URL}/og-image.jpg`;
 export const OG_IMAGE_WIDTH = 1200;
 export const OG_IMAGE_HEIGHT = 630;
 export const TWITTER_CARD = 'summary_large_image' as const;
-export const THEME_COLOR = '#140806';
+export const THEME_COLOR = '#14171c';
 
 // Central SEO config per public route
 export const SEO = {
   home: {
-    title: 'منصة محمد ياسر للدراسات الاجتماعية | تاريخ وجغرافيا وملازم PDF',
+    title: 'منصة محمد ياسر لطلاب ثانوية عامة | دروس مصورة وملازم PDF',
     description:
-      'منصة محمد ياسر للدراسات الاجتماعية — شرح تاريخ وجغرافيا مبسط، فيديوهات وملازم PDF وسبورات تفاعلية مع تفعيل فوري بكود MYSR. ابدأ الآن.',
+      'منصة محمد ياسر لطلاب ثانوية عامة — منهج منظم، فيديوهات شرح مبسطة، ملازم PDF وسبورات تفاعلية مع تفعيل فوري بكود MYSR. ابدأ الآن.',
     keywords:
-      'محمد ياسر, مستر محمد ياسر, منصة محمد ياسر, دراسات اجتماعية, تاريخ, جغرافيا, شرح تاريخ, شرح جغرافيا, ملازم PDF, سبورات, كود تفعيل MYSR, وحدات مدى الحياة',
+      'محمد ياسر, منصة محمد ياسر لطلاب ثانوية عامة, منصة تعليمية مصرية, دروس مصورة, ملازم PDF, سبورات, كود تفعيل MYSR, شرح منهج ثانوية عامة, وحدات مدى الحياة',
   },
   about: {
-    title: 'عن محمد ياسر | سيرة المدرس ومنهج MOYASSER التعليمي',
+    title: 'عن محمد ياسر | سيرة المدرس ومنهج moyasser التعليمي',
     description:
       'تعرف على مستر محمد ياسر وخبرته في تدريس الإعدادي والثانوي — فلسفة شرح مبسط، منهج منظم، وحدات مدى الحياة بكود MYSR ودعم واتساب مباشر لطلاب مصر بثقة.',
-    keywords: 'محمد ياسر, مستر محمد ياسر, عن محمد ياسر, سيرة مدرس, منصة MOYASSER, خبرة تدريس',
+    keywords: 'محمد ياسر, مستر محمد ياسر, عن محمد ياسر, سيرة مدرس, منصة moyasser, خبرة تدريس',
   },
   howItWorks: {
     title: 'كيف تبدأ رحلتك | خطوات التسجيل وتفعيل كود MYSR — محمد ياسر',
@@ -100,7 +100,7 @@ export function getCanonical(path: string): string {
 export function isNoIndexPath(pathname: string): boolean {
   return (
     pathname.startsWith('/student') ||
-    pathname.startsWith('/moyasser') ||
+    pathname.startsWith('/Moyasser') ||
     pathname.startsWith('/admin') ||
     pathname === '/login' ||
     pathname === '/register'
@@ -300,3 +300,6 @@ export const SHARED_FAQS: FaqItem[] = [
 ];
 
 export const LANDING_FAQS: FaqItem[] = SHARED_FAQS.slice(0, 5);
+
+
+

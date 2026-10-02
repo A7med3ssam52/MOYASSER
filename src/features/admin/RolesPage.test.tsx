@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+﻿import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -21,7 +21,7 @@ describe('RolesPage', () => {
     });
     mockState.profiles.push(
       {
-        id: 'user-moyasser-1',
+        id: 'user-Moyasser-1',
         full_name: 'الأستاذ محمد ياسر',
         phone: '+201001000001',
         guardian_phone: '+201001000001',
@@ -53,7 +53,7 @@ describe('RolesPage', () => {
     renderApp('/admin/roles');
 
     expect(await screen.findByRole('heading', { name: 'الأدوار والصلاحيات' })).toBeInTheDocument();
-    const moyasserRow = await screen.findByTestId('role-row-user-moyasser-1');
+    const moyasserRow = await screen.findByTestId('role-row-user-Moyasser-1');
     expect(within(moyasserRow).getByTestId('role-badge-mr_moyasser')).toBeInTheDocument();
     expect(screen.getByTestId('role-row-user-admin-1')).toBeInTheDocument();
     expect(screen.queryByTestId('role-row-user-student-1')).not.toBeInTheDocument();
@@ -73,7 +73,7 @@ describe('RolesPage', () => {
     const user = userEvent.setup();
     renderApp('/admin/roles');
 
-    const moyasserRow = await screen.findByTestId('role-row-user-moyasser-1');
+    const moyasserRow = await screen.findByTestId('role-row-user-Moyasser-1');
     const select = moyasserRow.querySelector('select')!;
     await user.selectOptions(select, 'admin');
 
@@ -85,14 +85,14 @@ describe('RolesPage', () => {
         getRpcCalls().some(
           (call) =>
             call.fn === 'set_user_role' &&
-            call.args?.p_user_id === 'user-moyasser-1' &&
+            call.args?.p_user_id === 'user-Moyasser-1' &&
             call.args?.p_role === 'admin',
         ),
       ).toBe(true);
     });
 
     await waitFor(() => {
-      const refreshed = screen.getByTestId('role-row-user-moyasser-1');
+      const refreshed = screen.getByTestId('role-row-user-Moyasser-1');
       expect(within(refreshed).getByTestId('role-badge-admin')).toBeInTheDocument();
     });
   });
@@ -101,7 +101,7 @@ describe('RolesPage', () => {
     const user = userEvent.setup();
     renderApp('/admin/roles');
 
-    const moyasserRow = await screen.findByTestId('role-row-user-moyasser-1');
+    const moyasserRow = await screen.findByTestId('role-row-user-Moyasser-1');
     await user.selectOptions(moyasserRow.querySelector('select')!, 'student');
     await user.click(screen.getByRole('button', { name: 'نعم، تغيير' }));
 
@@ -118,6 +118,9 @@ describe('RolesPage', () => {
     mockState.queryErrors.profiles = '';
     await user.click(screen.getByRole('button', { name: 'إعادة المحاولة' }));
 
-    expect(await screen.findByTestId('role-row-user-moyasser-1')).toBeInTheDocument();
+    expect(await screen.findByTestId('role-row-user-Moyasser-1')).toBeInTheDocument();
   });
 });
+
+
+

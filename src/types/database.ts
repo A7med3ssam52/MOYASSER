@@ -1,4 +1,4 @@
-export type UserRole = 'student' | 'teacher' | 'mr_moyasser' | 'admin' | 'assistant';
+﻿export type UserRole = 'student' | 'teacher' | 'mr_moyasser' | 'admin' | 'assistant';
 
 export type AccountStatus = 'active' | 'disabled';
 
@@ -12,6 +12,8 @@ export type Profile = {
   role: UserRole;
   status: AccountStatus;
   suspension_reason: string | null;
+  /** Storage path inside the private avatars bucket (<user_id>/avatar.jpg). NULL = no photo. */
+  avatar_path: string | null;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -31,6 +33,12 @@ export interface PublicSettings {
   platform_name?: string | null;
   whatsapp_number?: string | null;
   whatsapp_default_message?: string | null;
+  /** Suggestions inbox kill-switch (0075). Missing key = open. */
+  suggestions_open?: boolean | null;
+  /** Admin-editable banner text shown above the student suggestions form. */
+  suggestions_banner_message?: string | null;
+  /** Message shown instead of the form while the inbox is closed. */
+  suggestions_closed_message?: string | null;
 }
 
 export type ActiveGrade = {
@@ -220,6 +228,8 @@ export interface UnitPurchaseStats {
   top_units: Array<{ unit_name: string; purchases: number; revenue: number }>;
 }
 
+export type ProgressCompletionSource = 'auto' | 'manual' | 'exam';
+
 export type Progress = {
   id: string;
   student_id: string;
@@ -230,19 +240,81 @@ export type Progress = {
   is_completed: boolean;
   last_watched_at: string | null;
   updated_at: string;
+  /** Real completion timestamp (unified definition). Null when not completed. */
+  completed_at: string | null;
+  /** Completion source: auto (>=90% via upsert), manual (toggle), exam (submit). */
+  completed_by: ProgressCompletionSource | null;
 };
 
 export type ExamQuestionType = 'mcq' | 'essay';
 
+export type GeneralExamStatus = 'draft' | 'published' | 'archived';
+
 export type Exam = {
   id: string;
-  lesson_id: string;
+  lesson_id: string | null;
+  /** Set for standalone (grade-level) exams; NULL for per-lesson exams. */
+  grade_id: string | null;
   title: string;
   sort_order: number;
   passing_score: number;
+  /** Gates general exams only; lesson-exam reads ignore it. */
+  status: GeneralExamStatus;
+  starts_at: string | null;
+  ends_at: string | null;
+  duration_minutes: number | null;
+  show_leaderboard: boolean;
   deleted_at: string | null;
   created_at: string;
   updated_at: string;
+};
+
+/** Row returned by list_general_exams (exam + grade + counters + my attempt). */
+export type GeneralExamRow = {
+  id: string;
+  grade_id: string;
+  grade_name: string;
+  title: string;
+  sort_order: number;
+  passing_score: number;
+  status: GeneralExamStatus;
+  starts_at: string | null;
+  ends_at: string | null;
+  duration_minutes: number | null;
+  show_leaderboard: boolean;
+  question_count: number;
+  attempt_count: number;
+  my_attempt_id: string | null;
+  my_status: ExamAttemptStatus | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type GeneralExamLeaderboardRow = {
+  rank: number;
+  student_id: string;
+  student_name: string;
+  status: ExamAttemptStatus;
+  auto_score: number | null;
+  manual_score: number | null;
+  final_score: number | null;
+  submitted_at: string;
+};
+
+/** Answer-key review row (post-deadline): question + key + my answer. */
+export type GeneralExamReviewRow = {
+  question_id: string;
+  q_type: ExamQuestionType;
+  prompt: string;
+  choices: string[] | null;
+  correct_index: number | null;
+  max_score: number;
+  sort_order: number;
+  prompt_image_path: string | null;
+  choice_image_paths: (string | null)[] | null;
+  my_choice_index: number | null;
+  my_answer_text: string | null;
+  my_score: number | null;
 };
 
 export type ExamQuestion = {
@@ -282,6 +354,8 @@ export type ExamAttempt = {
   graded_by: string | null;
   graded_at: string | null;
   submitted_at: string;
+  /** Server-side attempt clock for general exams (NULL for legacy lesson attempts). */
+  started_at: string | null;
 };
 
 export type ExamAnswer = {
@@ -306,14 +380,103 @@ export type LessonComment = {
   created_at: string;
 };
 
+export type StreakFlameStage = 'none' | 'spark' | 'flame' | 'storm';
+
+export type StreakWeekDay = {
+  date: string;
+  active: boolean;
+  frozen: boolean;
+  today: boolean;
+  future: boolean;
+};
+
+export type StreakVoucherStatus = 'none' | 'granted' | 'used' | 'expired';
+
+export type StreakVoucherState = {
+  status: StreakVoucherStatus;
+  granted_at?: string;
+  expires_at?: string;
+  used_at?: string;
+};
+
+/** get_my_streak() reader shape (0085 gentle streak, Cairo days). */
+export type MyStreak = {
+  current_days: number;
+  last_active: string | null;
+  week_start: string;
+  week: StreakWeekDay[];
+  freeze_available: boolean;
+  freeze_used_this_week: boolean;
+  flame_stage: StreakFlameStage;
+  voucher: StreakVoucherState;
+};
+
+/** list_student_streaks() staff board row (0085). */
+export type StreakBoardRow = {
+  student_id: string;
+  full_name: string;
+  grade_name: string | null;
+  current_days: number;
+  last_active_date: string | null;
+  freeze_used_this_week: boolean;
+  voucher_status: StreakVoucherStatus;
+};
+
+export type StreakFreeze = {
+  id: string;
+  student_id: string;
+  week_start: string;
+  covers_date: string;
+  created_at: string;
+};
+
+export type StreakVoucher = {
+  id: string;
+  student_id: string;
+  granted_at: string;
+  expires_at: string;
+  used_at: string | null;
+  used_for_unit_id: string | null;
+  created_at: string;
+};
+
+export type SuggestionKind = 'issue' | 'suggestion' | 'other';
+
+export type SuggestionStatus = 'new' | 'reviewed' | 'planned' | 'done' | 'rejected';
+
+export type PlatformSuggestion = {
+  id: string;
+  student_id: string;
+  kind: SuggestionKind;
+  title: string;
+  body: string;
+  image_path: string | null;
+  status: SuggestionStatus;
+  created_at: string;
+};
+
+/** Admin inbox row: suggestion + student identity join (0075 list_suggestions). */
+export type AdminSuggestionRow = PlatformSuggestion & {
+  student_name: string;
+  student_phone: string;
+  grade_name: string | null;
+};
+
 export type NotificationType =
   | 'unit_activated'
   | 'new_content'
   | 'system'
+  | 'subscription_activated'
+  | 'subscription_expiring'
+  | 'subscription_expired'
+  | 'avatar_required'
+  | 'avatar_updated'
   | 'exam_submitted'
   | 'exam_graded'
   | 'lesson_comment'
-  | 'comment_reply';
+  | 'comment_reply'
+  | 'suggestion_status'
+  | 'voucher_granted';
 
 export type AppNotification = {
   id: string;
@@ -719,6 +882,24 @@ export interface Database {
         Update: Partial<LessonComment>;
         Relationships: [];
       };
+      streak_freezes: {
+        Row: StreakFreeze;
+        Insert: Partial<StreakFreeze>;
+        Update: Partial<StreakFreeze>;
+        Relationships: [];
+      };
+      streak_vouchers: {
+        Row: StreakVoucher;
+        Insert: Partial<StreakVoucher>;
+        Update: Partial<StreakVoucher>;
+        Relationships: [];
+      };
+      platform_suggestions: {
+        Row: PlatformSuggestion;
+        Insert: Partial<PlatformSuggestion>;
+        Update: Partial<PlatformSuggestion>;
+        Relationships: [];
+      };
     };
     Views: {
       [_ in never]: never;
@@ -733,6 +914,10 @@ export interface Database {
         };
         Returns: void;
       };
+      set_my_avatar: { Args: { p_path: string }; Returns: void };
+      remove_my_avatar: { Args: never; Returns: void };
+      remind_missing_avatars: { Args: never; Returns: number };
+      get_server_time: { Args: never; Returns: string };
       update_student_profile: {
         Args: {
           p_student_id: string;
@@ -761,7 +946,10 @@ export interface Database {
       list_active_grades: { Args: never; Returns: ActiveGrade[] };
       get_public_settings: { Args: never; Returns: PublicSettings };
       get_current_role: { Args: never; Returns: UserRole };
-      redeem_unit_code: { Args: { p_code: string }; Returns: UnitPurchase };
+      redeem_unit_code: { Args: { p_code: string; p_use_voucher?: boolean }; Returns: UnitPurchase };
+      get_my_streak: { Args: never; Returns: MyStreak };
+      use_streak_freeze: { Args: never; Returns: string };
+      list_student_streaks: { Args: never; Returns: StreakBoardRow[] };
       get_my_unit_purchases: { Args: never; Returns: UnitPurchase[] };
       get_my_lesson_access: { Args: { p_lesson_id: string }; Returns: LessonAccessInfo };
       get_public_unit_prices: { Args: never; Returns: PublicUnitPrice[] };
@@ -894,6 +1082,50 @@ export interface Database {
       list_exams: { Args: { p_lesson_id: string }; Returns: Exam[] };
       get_exam_questions: { Args: { p_exam_id: string }; Returns: ExamQuestion[] };
       get_my_exam_attempt: { Args: { p_exam_id: string }; Returns: ExamAttempt[] };
+      list_general_exams: { Args: { p_grade_id?: string | null }; Returns: GeneralExamRow[] };
+      get_general_exam_leaderboard: {
+        Args: { p_exam_id: string };
+        Returns: GeneralExamLeaderboardRow[];
+      };
+      get_general_exam_review: {
+        Args: { p_exam_id: string };
+        Returns: GeneralExamReviewRow[];
+      };
+      start_general_exam_attempt: { Args: { p_exam_id: string }; Returns: ExamAttempt };
+      submit_general_exam_attempt: {
+        Args: { p_exam_id: string; p_answers: unknown };
+        Returns: ExamAttempt;
+      };
+      create_general_exam: {
+        Args: {
+          p_grade_id: string;
+          p_title: string;
+          p_starts_at?: string | null;
+          p_ends_at?: string | null;
+          p_duration_minutes?: number | null;
+          p_passing_score?: number | null;
+          p_show_leaderboard?: boolean | null;
+        };
+        Returns: string;
+      };
+      update_general_exam: {
+        Args: {
+          p_exam_id: string;
+          p_title?: string | null;
+          p_starts_at?: string | null;
+          p_ends_at?: string | null;
+          p_duration_minutes?: number | null;
+          p_passing_score?: number | null;
+          p_show_leaderboard?: boolean | null;
+          p_status?: string | null;
+        };
+        Returns: void;
+      };
+      publish_general_exam: { Args: { p_exam_id: string }; Returns: void };
+      reset_general_exam_attempt: {
+        Args: { p_exam_id: string; p_student_id: string };
+        Returns: void;
+      };
       delete_exam: { Args: { p_exam_id: string }; Returns: void };
       delete_exam_question: { Args: { p_question_id: string }; Returns: void };
       submit_exam_attempt: {
@@ -987,6 +1219,36 @@ export interface Database {
       };
       close_stale_sessions: { Args: never; Returns: number };
       cleanup_old_presence_events: { Args: never; Returns: number };
+      submit_suggestion: {
+        Args: { p_kind: SuggestionKind; p_title: string; p_body: string };
+        Returns: PlatformSuggestion;
+      };
+      attach_suggestion_image: {
+        Args: { p_suggestion_id: string; p_path: string };
+        Returns: void;
+      };
+      list_my_suggestions: { Args: never; Returns: PlatformSuggestion[] };
+      list_suggestions: {
+        Args: {
+          p_kind?: SuggestionKind | null;
+          p_status?: SuggestionStatus | null;
+          p_limit?: number | null;
+          p_offset?: number | null;
+        };
+        Returns: AdminSuggestionRow[];
+      };
+      update_suggestion_status: {
+        Args: { p_suggestion_id: string; p_status: SuggestionStatus };
+        Returns: PlatformSuggestion;
+      };
+      delete_suggestion: { Args: { p_suggestion_id: string }; Returns: void };
+      get_unread_suggestions_count: {
+        Args: never;
+        Returns: Array<{ unread_count: number; last_seen_at: string | null }>;
+      };
+      mark_suggestions_seen: { Args: never; Returns: number };
+      set_app_setting: { Args: { p_key: string; p_value: unknown }; Returns: void };
     };
   };
 }
+

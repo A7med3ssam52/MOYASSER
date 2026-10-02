@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+﻿import type { ComponentType } from 'react';
 
 export type AdVariant = 'info' | 'success' | 'warning' | 'error';
 
@@ -48,3 +48,4 @@ export const DEFAULT_AD_CONTENT: AdContent = {
   signatureName: 'الإدارة',
   signatureTitle: '',
 };
+

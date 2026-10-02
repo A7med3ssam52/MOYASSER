@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+﻿import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { Button } from './Button';
 
@@ -57,3 +57,4 @@ export function Pagination({ page, totalPages, onPageChange, disabled = false }:
     </nav>
   );
 }
+

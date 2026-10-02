@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from '@testing-library/react';
+﻿import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -452,3 +452,5 @@ describe('CurriculumPage', () => {
     expect(await screen.findByText('ليست لديك صلاحية')).toBeInTheDocument();
   });
 });
+
+

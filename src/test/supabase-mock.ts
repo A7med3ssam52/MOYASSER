@@ -1,4 +1,4 @@
-import { vi } from 'vitest';
+﻿import { vi } from 'vitest';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -23,12 +23,18 @@ interface MockState {
   unitCodes: AnyRecord[];
   unitPurchases: AnyRecord[];
   progress: AnyRecord[];
+  streakFreezes: AnyRecord[];
+  streakVouchers: AnyRecord[];
   notifications: AnyRecord[];
   exams: AnyRecord[];
   examQuestions: AnyRecord[];
   examAttempts: AnyRecord[];
   examAnswers: AnyRecord[];
   lessonComments: AnyRecord[];
+  suggestions: AnyRecord[];
+  storageUploads: Array<{ bucket: string; path: string }>;
+  inboxLastSeenAt: string | null;
+  appSettings: Record<string, unknown>;
   dashboardStats: AnyRecord;
   financialReports: AnyRecord;
   platformExpenses: AnyRecord[];
@@ -49,6 +55,8 @@ interface MockState {
   reauthenticateError: string | null;
   signOutError: string | null;
   rpcCalls: Array<{ fn: string; args: AnyRecord | undefined }>;
+  /** Fixed server clock for get_server_time tests. Null = real current time. */
+  serverTimeNow: string | null;
   authCalls: Array<{ method: string; params: unknown }>;
   queryCalls: Array<{
     table: string;
@@ -80,12 +88,22 @@ const state: MockState = {
   unitCodes: [],
   unitPurchases: [],
   progress: [],
+  streakFreezes: [],
+  streakVouchers: [],
   notifications: [],
   exams: [],
   examQuestions: [],
   examAttempts: [],
   examAnswers: [],
   lessonComments: [],
+  suggestions: [],
+  storageUploads: [],
+  inboxLastSeenAt: null,
+  appSettings: {
+    suggestions_open: true,
+    suggestions_banner_message: 'banner-test',
+    suggestions_closed_message: 'closed-test',
+  },
   dashboardStats: makeDashboardStats(),
   financialReports: makeFinancialReports(),
   platformExpenses: [],
@@ -106,6 +124,7 @@ const state: MockState = {
   reauthenticateError: null,
   signOutError: null,
   rpcCalls: [],
+  serverTimeNow: null,
   authCalls: [],
   queryCalls: [],
   authListeners: [],
@@ -136,7 +155,7 @@ export function makeSession(user: AnyRecord): MockSession {
 export function makeProfile(overrides: Partial<AnyRecord> = {}): AnyRecord {
   return {
     id: 'user-test-1',
-    full_name: 'أحمد محمد',
+    full_name: 'أحمد محمد علي',
     phone: '01001234567',
     guardian_phone: '01112345678',
     address: 'القاهرة',
@@ -144,6 +163,7 @@ export function makeProfile(overrides: Partial<AnyRecord> = {}): AnyRecord {
     role: 'student',
     status: 'active',
     suspension_reason: null,
+    avatar_path: null,
     deleted_at: null,
     created_at: '2026-01-01T10:00:00.000Z',
     updated_at: '2026-01-01T10:00:00.000Z',
@@ -284,7 +304,7 @@ export function makeUnitCode(overrides: Partial<AnyRecord> = {}): AnyRecord {
     code: 'MYSR-ABCD-EFGH-JKLM',
     unit_id: 'unit-1',
     status: 'available',
-    created_by: 'user-moyasser-1',
+    created_by: 'user-Moyasser-1',
     created_at: daysFromNow(-2),
     used_at: null,
     used_by: null,
@@ -296,6 +316,7 @@ export function makeUnitCode(overrides: Partial<AnyRecord> = {}): AnyRecord {
 }
 
 export function makeProgress(overrides: Partial<AnyRecord> = {}): AnyRecord {
+  const isCompleted = (overrides.is_completed as boolean | undefined) ?? false;
   return {
     id: 'progress-1',
     student_id: 'user-test-1',
@@ -306,6 +327,8 @@ export function makeProgress(overrides: Partial<AnyRecord> = {}): AnyRecord {
     is_completed: false,
     last_watched_at: nowIso(),
     updated_at: nowIso(),
+    completed_at: isCompleted ? nowIso() : null,
+    completed_by: isCompleted ? 'auto' : null,
     ...overrides,
   };
 }
@@ -323,6 +346,92 @@ export function makeNotification(overrides: Partial<AnyRecord> = {}): AnyRecord 
     entity_type: 'lesson',
     entity_id: 'lesson-1',
     created_at: daysFromNow(-1),
+    ...overrides,
+  };
+}
+
+export function makeStreakFreeze(overrides: Partial<AnyRecord> = {}): AnyRecord {
+  return {
+    id: 'freeze-1',
+    student_id: 'user-test-1',
+    week_start: daysFromNow(0).slice(0, 10),
+    covers_date: daysFromNow(-1).slice(0, 10),
+    created_at: nowIso(),
+    ...overrides,
+  };
+}
+
+export function makeVoucher(overrides: Partial<AnyRecord> = {}): AnyRecord {
+  return {
+    id: 'voucher-1',
+    student_id: 'user-test-1',
+    granted_at: nowIso(),
+    expires_at: daysFromNow(30),
+    used_at: null,
+    used_for_unit_id: null,
+    created_at: nowIso(),
+    ...overrides,
+  };
+}
+
+function mockDayKey(offsetDays: number): string {
+  return daysFromNow(offsetDays).slice(0, 10);
+}
+
+/** Faithful-enough streak counter for tests (UTC days; the SQL uses Cairo). */
+function computeMockStreak(uid: string): {
+  current: number;
+  activeDays: Set<string>;
+  freezeUsed: boolean;
+} {
+  const activeDays = new Set<string>();
+  for (const item of state.progress) {
+    if (item.student_id === uid && Number(item.percent_completed ?? 0) > 0) {
+      activeDays.add(String(item.updated_at ?? '').slice(0, 10));
+    }
+  }
+  for (const freeze of state.streakFreezes) {
+    if (freeze.student_id === uid && freeze.covers_date) {
+      activeDays.add(String(freeze.covers_date));
+    }
+  }
+  let cursor = 0;
+  if (!activeDays.has(mockDayKey(0))) cursor = -1;
+  let current = 0;
+  while (activeDays.has(mockDayKey(cursor))) {
+    current += 1;
+    cursor -= 1;
+  }
+  const weekStart = mockDayKey(-6);
+  const freezeUsed = state.streakFreezes.some(
+    (item) => item.student_id === uid && String(item.week_start ?? '') >= weekStart,
+  );
+  return { current, activeDays, freezeUsed };
+}
+
+function mockVoucherState(uid: string): AnyRecord {
+  const row = state.streakVouchers.find((item) => item.student_id === uid);
+  if (!row) return { status: 'none' };
+  if (row.used_at) return { status: 'used', used_at: row.used_at };
+  if (String(row.expires_at ?? '') < nowIso()) return { status: 'expired', expires_at: row.expires_at };
+  return { status: 'granted', granted_at: row.granted_at, expires_at: row.expires_at };
+}
+
+export function makeMyStreak(overrides: Partial<AnyRecord> = {}): AnyRecord {
+  const week = Array.from({ length: 7 }, (_, index) => {
+    const offset = index - 6;
+    const date = mockDayKey(offset);
+    return { date, active: false, frozen: false, today: offset === 0, future: false };
+  });
+  return {
+    current_days: 0,
+    last_active: null,
+    week_start: mockDayKey(-6),
+    week,
+    freeze_available: true,
+    freeze_used_this_week: false,
+    flame_stage: 'none',
+    voucher: { status: 'none' },
     ...overrides,
   };
 }
@@ -453,10 +562,24 @@ export function makeLessonComment(overrides: Partial<AnyRecord> = {}): AnyRecord
   };
 }
 
+export function makeSuggestion(overrides: Partial<AnyRecord> = {}): AnyRecord {
+  return {
+    id: 'suggestion-1',
+    student_id: 'user-test-1',
+    kind: 'suggestion',
+    title: 'عنوان تجريبي',
+    body: 'نص تجريبي طويل بما يكفي للتحقق من الصحة',
+    image_path: null,
+    status: 'new',
+    created_at: '2026-01-04T10:00:00.000Z',
+    ...overrides,
+  };
+}
+
 export function makeAuditLog(overrides: Partial<AnyRecord> = {}): AnyRecord {
   return {
     id: 'audit-1',
-    actor_id: 'user-moyasser-1',
+    actor_id: 'user-Moyasser-1',
     actor_role: 'mr_moyasser',
     action: 'profile.update',
     entity_type: 'profiles',
@@ -480,6 +603,9 @@ export function setAuthenticatedUser(profile: AnyRecord): MockSession {
     platform_name: 'محمد ياسر',
     whatsapp_number: '+201000000000',
     whatsapp_default_message: 'مرحبًا، أود التواصل مع الأستاذ',
+    suggestions_open: state.appSettings.suggestions_open ?? true,
+    suggestions_banner_message: state.appSettings.suggestions_banner_message ?? null,
+    suggestions_closed_message: state.appSettings.suggestions_closed_message ?? null,
   };
   return session;
 }
@@ -491,8 +617,8 @@ export function setAuthenticatedStudent(overrides: Partial<AnyRecord> = {}) {
 export function setAuthenticatedMoyasser(overrides: Partial<AnyRecord> = {}) {
   return setAuthenticatedUser(
     makeProfile({
-      id: 'user-moyasser-1',
-      email: 'moyasser@example.com',
+      id: 'user-Moyasser-1',
+      email: 'Moyasser@example.com',
       full_name: 'الأستاذ محمد ياسر',
       role: 'mr_moyasser',
       ...overrides,
@@ -675,7 +801,11 @@ function createQueryBuilder(table: string): QueryBuilder {
     }
     rows = applyFilters(tableRows(table));
     if (single) {
-      return { data: rows[0] ?? null, error: null };
+      // Return a copy like a real network response: callers must never
+      // observe later in-place mutations through a previously read row
+      // (otherwise React bails out on identical references).
+      const row = rows[0] ?? null;
+      return { data: row ? { ...row } : null, error: null };
     }
     return { data: rows, error: null };
   };
@@ -782,6 +912,7 @@ function createMockClient() {
     if (fn === 'toggle_lesson_completed') {
       const lessonId = String(args?.p_lesson_id ?? '');
       const completed = Boolean(args?.p_completed);
+      const source = args?.p_source === 'exam' ? 'exam' : 'manual';
       if (!uid) return error('access_denied');
       let existing = state.progress.find((item) => item.student_id === uid && item.lesson_id === lessonId);
       if (completed) {
@@ -795,6 +926,8 @@ function createMockClient() {
           is_completed: true,
           last_watched_at: nowIso(),
           updated_at: nowIso(),
+          completed_at: (existing?.completed_at as string | null) ?? nowIso(),
+          completed_by: source,
         });
         if (existing) Object.assign(existing, updated);
         else {
@@ -813,11 +946,17 @@ function createMockClient() {
             is_completed: false,
             last_watched_at: nowIso(),
             updated_at: nowIso(),
+            completed_at: null,
+            completed_by: null,
           });
           state.progress.push(created);
           return { data: created, error: null };
         }
         existing.is_completed = false;
+        // 0072: unmark lowers percent below 90 + clears completed_at.
+        existing.percent_completed = Math.min(Number(existing.percent_completed ?? 0), 89);
+        existing.completed_at = null;
+        existing.completed_by = null;
         existing.last_watched_at = nowIso();
         existing.updated_at = nowIso();
         return { data: existing, error: null };
@@ -833,21 +972,32 @@ function createMockClient() {
       const existing = state.progress.find(
         (item) => item.student_id === uid && item.lesson_id === lessonId,
       );
+      // 0072: position is GREATEST(old,new).
+      const mergedPosition = existing
+        ? Math.max(Number(existing.position_seconds ?? 0), position)
+        : position;
+      const mergedPercent = existing
+        ? Math.max(Number(existing.percent_completed ?? 0), percent)
+        : percent;
+      const mergedCompleted = existing
+        ? Boolean(existing.is_completed) || mergedPercent >= 90
+        : percent >= 90;
       const updated = makeProgress({
         ...existing,
         id: existing?.id ?? `progress-created-${++state.idSeq}`,
         student_id: uid,
         lesson_id: lessonId,
-        position_seconds: position,
-        percent_completed: existing
-          ? Math.max(Number(existing.percent_completed), percent)
-          : percent,
-        is_completed: existing
-          ? Boolean(existing.is_completed) ||
-            Math.max(Number(existing.percent_completed), percent) >= 90
-          : percent >= 90,
+        position_seconds: mergedPosition,
+        percent_completed: mergedPercent,
+        is_completed: mergedCompleted,
         last_watched_at: nowIso(),
         updated_at: nowIso(),
+        completed_at: mergedCompleted
+          ? ((existing?.completed_at as string | null) ?? nowIso())
+          : null,
+        completed_by: mergedCompleted
+          ? ((existing?.completed_by as string | null) ?? 'auto')
+          : null,
       });
       if (existing) {
         Object.assign(existing, updated);
@@ -855,6 +1005,80 @@ function createMockClient() {
         state.progress.push(updated);
       }
       return { data: updated, error: null };
+    }
+    if (fn === 'get_my_streak') {
+      const student = state.profiles.find((item) => item.id === uid);
+      if (student?.role !== 'student') {
+        return error('access_denied');
+      }
+      const { current, activeDays, freezeUsed } = computeMockStreak(uid as string);
+      const week = Array.from({ length: 7 }, (_, index) => {
+        const offset = index - 6;
+        const date = mockDayKey(offset);
+        const frozen = state.streakFreezes.some(
+          (item) => item.student_id === uid && String(item.covers_date ?? '') === date,
+        );
+        return { date, active: activeDays.has(date), frozen, today: offset === 0, future: false };
+      });
+      const flameStage = current >= 30 ? 'storm' : current >= 7 ? 'flame' : current >= 1 ? 'spark' : 'none';
+      // Mirror the server auto-claim: first observation of 30+ days grants.
+      const existingVoucher = state.streakVouchers.find((item) => item.student_id === uid);
+      if (current >= 30 && !existingVoucher) {
+        state.streakVouchers.push(makeVoucher({ id: `voucher-created-${++state.idSeq}`, student_id: uid }));
+      }
+      return {
+        data: makeMyStreak({
+          current_days: current,
+          week,
+          freeze_available: !freezeUsed,
+          freeze_used_this_week: freezeUsed,
+          flame_stage: flameStage,
+          voucher: mockVoucherState(uid as string),
+        }),
+        error: null,
+      };
+    }
+    if (fn === 'use_streak_freeze') {
+      const student = state.profiles.find((item) => item.id === uid);
+      if (student?.role !== 'student') {
+        return error('access_denied');
+      }
+      const { freezeUsed } = computeMockStreak(uid as string);
+      if (freezeUsed) {
+        return error('freeze_already_used');
+      }
+      const covered = mockDayKey(-1);
+      state.streakFreezes.push(
+        makeStreakFreeze({
+          id: `freeze-created-${++state.idSeq}`,
+          student_id: uid,
+          week_start: mockDayKey(-6),
+          covers_date: covered,
+        }),
+      );
+      return { data: covered, error: null };
+    }
+    if (fn === 'list_student_streaks') {
+      const caller = state.profiles.find((item) => item.id === uid);
+      if (caller?.role !== 'admin' && caller?.role !== 'mr_moyasser' && caller?.role !== 'teacher') {
+        return error('access_denied');
+      }
+      const rows = state.profiles
+        .filter((profile) => profile.role === 'student')
+        .map((profile) => {
+          const { current, freezeUsed } = computeMockStreak(profile.id as string);
+          const grade = state.grades.find((item) => item.id === profile.grade_id);
+          return {
+            student_id: profile.id,
+            full_name: profile.full_name ?? '',
+            grade_name: grade?.name ?? null,
+            current_days: current,
+            last_active_date: null,
+            freeze_used_this_week: freezeUsed,
+            voucher_status: (mockVoucherState(profile.id as string).status as string) ?? 'none',
+          };
+        });
+      return { data: rows, error: null };
     }
     if (fn === 'mark_notification_read') {
       const row = state.notifications.find((item) => item.id === args?.p_notification_id);
@@ -1452,13 +1676,30 @@ function createMockClient() {
       ) {
         return error('unit_already_purchased');
       }
+      // Streak fee-waiver voucher (0085): explicit opt-in only.
+      let fee = Number(pricing.platform_fee ?? 0);
+      if (args?.p_use_voucher === true) {
+        const voucher = state.streakVouchers.find((item) => item.student_id === uid);
+        if (!voucher) {
+          return error('voucher_not_found');
+        }
+        if (voucher.used_at) {
+          return error('voucher_already_used');
+        }
+        if (String(voucher.expires_at ?? '') < nowIso()) {
+          return error('voucher_expired');
+        }
+        fee = 0;
+        voucher.used_at = nowIso();
+        voucher.used_for_unit_id = codeRow.unit_id;
+      }
       const purchase = makeUnitPurchase({
         id: `purchase-created-${++state.idSeq}`,
         student_id: uid,
         unit_id: codeRow.unit_id,
         base_price: pricing.base_price,
-        platform_fee: pricing.platform_fee,
-        total_price: pricing.total_price,
+        platform_fee: fee,
+        total_price: Number(pricing.base_price ?? 0) + fee,
         code_id: codeRow.id,
         purchased_at: nowIso(),
         status: 'active',
@@ -1509,7 +1750,7 @@ function createMockClient() {
           code: `MYSR-${String(state.idSeq).padStart(6, '0')}`,
           unit_id: unitId,
           status: 'available',
-          created_by: uid ?? 'user-moyasser-1',
+          created_by: uid ?? 'user-Moyasser-1',
           created_at: nowIso(),
           used_at: null,
           used_by: null,
@@ -1703,7 +1944,7 @@ function createMockClient() {
       state.notifications.push(
         makeNotification({
           id: `notif-created-${++state.idSeq}`,
-          user_id: 'user-moyasser-1',
+          user_id: 'user-Moyasser-1',
           type: 'exam_submitted',
           title: 'إجابة جديدة',
           body: `أرسل طالب إجابة عن اختبار ${exam.title}`,
@@ -1860,7 +2101,7 @@ function createMockClient() {
       state.notifications.push(
         makeNotification({
           id: `notif-created-${++state.idSeq}`,
-          user_id: 'user-moyasser-1',
+          user_id: 'user-Moyasser-1',
           type: 'lesson_comment',
           title: 'تعليق جديد',
           body: `${comment.author_name}: ${body.slice(0, 40)}`,
@@ -1981,6 +2222,315 @@ function createMockClient() {
           board.updated_at = nowIso();
         }
       });
+      return { data: null, error: null };
+    }
+    return null;
+  };
+
+  const SUGGESTION_KINDS = ['issue', 'suggestion', 'other'];
+  const SUGGESTION_STATUSES = ['new', 'reviewed', 'planned', 'done', 'rejected'];
+
+  const applyServerTimeRpc = (fn: string): RpcResult | null => {
+    if (fn !== 'get_server_time') {
+      return null;
+    }
+    return { data: state.serverTimeNow ?? new Date().toISOString(), error: null };
+  };
+
+  const applyOwnProfileRpc = (fn: string, args: AnyRecord | undefined): RpcResult | null => {
+    if (fn !== 'update_own_profile') {
+      return null;
+    }
+    const uid = currentUserId();
+    const profile = state.profiles.find((item) => item.id === uid);
+    if (!uid || !profile) {
+      return error('permission_denied');
+    }
+    for (const key of ['full_name', 'phone', 'guardian_phone', 'address'] as const) {
+      const argKey = `p_${key}`;
+      if (args?.[argKey] !== undefined) {
+        profile[key] = args[argKey];
+      }
+    }
+    return { data: null, error: null };
+  };
+
+    const applyAvatarRpc = (fn: string, args: AnyRecord | undefined): RpcResult | null => {    const uid = currentUserId();
+    const profile = state.profiles.find((item) => item.id === uid);
+    const role = String(profile?.role ?? '');
+    const isStudent = role === 'student' && profile?.status === 'active' && !profile?.deleted_at;
+    const isStaff = role === 'admin' || role === 'mr_moyasser';
+    if (fn === 'set_my_avatar') {
+      if (!uid || !isStudent || !profile) {
+        return error('permission_denied');
+      }
+      const path = String(args?.p_path ?? '');
+      // Mirror 0089: <own-uid>/avatar.<ext> with an allow-listed
+      // original-format extension, OR a caller-owned Cloudinary pointer
+      // (cloudinary:<own-uid>/avatar.<ext>:<version>) — nothing else.
+      // Legacy paths require the uploaded storage row (avatar_missing);
+      // Cloudinary bytes live outside Supabase (no row required).
+      const legacyOk = ['jpg', 'jpeg', 'png', 'webp'].some((ext) => path === `${uid}/avatar.${ext}`);
+      const cloudinaryOk =
+        path.startsWith('cloudinary:') &&
+        ['jpg', 'jpeg', 'png', 'webp'].some((ext) =>
+          new RegExp(`^cloudinary:${uid}/avatar\\.${ext}:[0-9]+$`).test(path),
+        );
+      if (!legacyOk && !cloudinaryOk) {
+        return error('invalid_avatar_path');
+      }
+      if (
+        legacyOk &&
+        !state.storageUploads.some((item) => item.bucket === 'avatars' && item.path === path)
+      ) {
+        return error('avatar_missing');
+      }
+      profile.avatar_path = path;
+      // Mirror 0087: every change notifies each active, non-deleted admin.
+      const stamp = Date.now();
+      for (const admin of state.profiles) {
+        if (admin.role !== 'admin' || admin.status !== 'active' || admin.deleted_at) {
+          continue;
+        }
+        state.notifications.push(
+          makeNotification({
+            id: `notif-avatar-updated-${uid}-${stamp}-${admin.id}`,
+            user_id: admin.id,
+            type: 'avatar_updated',
+            title: 'تحديث الصورة الشخصية',
+            body: profile.full_name ?? '',
+            dedup_key: `avatar_updated:${uid}:${stamp}:${admin.id}`,
+            entity_type: 'profiles',
+            entity_id: uid,
+          }),
+        );
+      }
+      return { data: null, error: null };
+    }
+    if (fn === 'remove_my_avatar') {
+      if (!uid || !isStudent || !profile) {
+        return error('permission_denied');
+      }
+      const path = String(profile.avatar_path ?? '');
+      profile.avatar_path = null;
+      if (path) {
+        state.storageUploads = state.storageUploads.filter(
+          (item) => !(item.bucket === 'avatars' && item.path === path),
+        );
+      }
+      return { data: null, error: null };
+    }
+    if (fn === 'remind_missing_avatars') {
+      if (!uid || !isStaff || !profile) {
+        return error('permission_denied');
+      }
+      let inserted = 0;
+      for (const student of state.profiles) {
+        if (
+          student.role !== 'student' ||
+          student.status !== 'active' ||
+          student.deleted_at ||
+          student.avatar_path
+        ) {
+          continue;
+        }
+        const dedup = `avatar_required:${student.id}`;
+        if (state.notifications.some((item) => item.dedup_key === dedup)) {
+          continue;
+        }
+        state.notifications.push(
+          makeNotification({
+            id: `notif-avatar-${student.id}`,
+            user_id: student.id,
+            type: 'avatar_required',
+            title: 'الصورة الشخصية مطلوبة',
+            body: 'ارفع صورتك الشخصية من صفحة الملف الشخصي لفتح كامل أقسام المنصة.',
+            dedup_key: dedup,
+            entity_type: null,
+            entity_id: null,
+          }),
+        );
+        inserted += 1;
+      }
+      return { data: inserted, error: null };
+    }
+    return null;
+  };
+
+  const applySuggestionsRpc = (fn: string, args: AnyRecord | undefined): RpcResult | null => {
+    const uid = currentUserId();
+    const profile = state.profiles.find((item) => item.id === uid);
+    const role = String(profile?.role ?? '');
+    const isStudent = role === 'student' && profile?.status === 'active' && !profile?.deleted_at;
+    const isAdmin = role === 'admin';
+    if (fn === 'submit_suggestion') {
+      if (!uid || !isStudent) {
+        return error('permission_denied');
+      }
+      if (state.appSettings.suggestions_open === false) {
+        return error('suggestions_closed');
+      }
+      const kind = String(args?.p_kind ?? '');
+      const title = String(args?.p_title ?? '').trim();
+      const body = String(args?.p_body ?? '').trim();
+      if (!SUGGESTION_KINDS.includes(kind)) {
+        return error('invalid_kind');
+      }
+      if (!title || title.length > 100) {
+        return error('invalid_title');
+      }
+      if (body.length < 10 || body.length > 1000) {
+        return error('invalid_body');
+      }
+      const row = makeSuggestion({
+        id: `suggestion-created-${++state.idSeq}`,
+        student_id: uid,
+        kind,
+        title,
+        body,
+        status: 'new',
+        created_at: nowIso(),
+      });
+      state.suggestions.push(row);
+      return { data: row, error: null };
+    }
+    if (fn === 'attach_suggestion_image') {
+      if (!uid || !isStudent) {
+        return error('permission_denied');
+      }
+      const row = state.suggestions.find(
+        (item) => item.id === args?.p_suggestion_id && item.student_id === uid,
+      );
+      if (!row) {
+        return error('suggestion_not_found');
+      }
+      if (row.image_path) {
+        return error('suggestion_image_exists');
+      }
+      // Cloudinary cutover (0091): pointer must be
+      // cloudinary:suggestion-images/<own-suggestion-id>/<uuid>.<ext>:<version>.
+      const path = String(args?.p_path ?? '');
+      const match = /^cloudinary:suggestion-images\/([0-9a-f-]{36})\/([0-9a-f-]{36})\.(jpg|jpeg|png|webp):([0-9]+)$/i.exec(
+        path,
+      );
+      if (!match || match[1].toLowerCase() !== String(row.id).toLowerCase()) {
+        return error('invalid_image');
+      }
+      row.image_path = path;
+      return { data: null, error: null };
+    }
+    if (fn === 'list_my_suggestions') {
+      if (!uid || !isStudent) {
+        return error('permission_denied');
+      }
+      const rows = state.suggestions
+        .filter((item) => item.student_id === uid)
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+      return { data: rows, error: null };
+    }
+    if (fn === 'list_suggestions') {
+      if (!uid || !isAdmin) {
+        return error('permission_denied');
+      }
+      const kind = (args?.p_kind as string | null) ?? null;
+      const status = (args?.p_status as string | null) ?? null;
+      if (kind && !SUGGESTION_KINDS.includes(kind)) {
+        return error('invalid_kind');
+      }
+      if (status && !SUGGESTION_STATUSES.includes(status)) {
+        return error('invalid_status');
+      }
+      const limit = Math.max(1, Math.min(Number(args?.p_limit ?? 50), 100));
+      const offset = Math.max(0, Number(args?.p_offset ?? 0));
+      const rows = state.suggestions
+        .filter((item) => (!kind || item.kind === kind) && (!status || item.status === status))
+        .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+        .slice(offset, offset + limit)
+        .map((item) => {
+          const student = state.profiles.find((candidate) => candidate.id === item.student_id);
+          const grade = state.grades.find((candidate) => candidate.id === student?.grade_id);
+          return {
+            ...item,
+            student_name: student?.full_name ?? '',
+            student_phone: student?.phone ?? '',
+            grade_name: grade?.name ?? null,
+          };
+        });
+      return { data: rows, error: null };
+    }
+    if (fn === 'update_suggestion_status') {
+      if (!uid || !isAdmin) {
+        return error('permission_denied');
+      }
+      const status = String(args?.p_status ?? '');
+      if (!SUGGESTION_STATUSES.includes(status)) {
+        return error('invalid_status');
+      }
+      const row = state.suggestions.find((item) => item.id === args?.p_suggestion_id);
+      if (!row) {
+        return error('suggestion_not_found');
+      }
+      if (row.status !== status) {
+        row.status = status;
+        state.notifications.push(
+          makeNotification({
+            id: `notification-created-${++state.idSeq}`,
+            user_id: row.student_id,
+            type: 'suggestion_status',
+            title: 'تحديث على حالة مشاركتك',
+            body: row.title,
+            entity_type: 'suggestion',
+            entity_id: row.id,
+            created_at: nowIso(),
+          }),
+        );
+      }
+      return { data: row, error: null };
+    }
+    if (fn === 'delete_suggestion') {
+      if (!uid || !isAdmin) {
+        return error('permission_denied');
+      }
+      const index = state.suggestions.findIndex((item) => item.id === args?.p_suggestion_id);
+      if (index < 0) {
+        return error('suggestion_not_found');
+      }
+      const [removed] = state.suggestions.splice(index, 1);
+      if (removed?.image_path) {
+        state.storageUploads = state.storageUploads.filter((item) => item.path !== removed.image_path);
+      }
+      return { data: null, error: null };
+    }
+    if (fn === 'get_unread_suggestions_count') {
+      if (!uid || !isAdmin) {
+        return error('permission_denied');
+      }
+      const watermark = state.inboxLastSeenAt;
+      const unread = state.suggestions.filter(
+        (item) => !watermark || String(item.created_at) > watermark,
+      );
+      return { data: [{ unread_count: unread.length, last_seen_at: watermark }], error: null };
+    }
+    if (fn === 'mark_suggestions_seen') {
+      if (!uid || !isAdmin) {
+        return error('permission_denied');
+      }
+      const watermark = state.inboxLastSeenAt;
+      const marked = state.suggestions.filter(
+        (item) => !watermark || String(item.created_at) > watermark,
+      ).length;
+      state.inboxLastSeenAt = nowIso();
+      return { data: marked, error: null };
+    }
+    if (fn === 'set_app_setting') {
+      const key = String(args?.p_key ?? '');
+      const isWhatsapp = key.startsWith('whatsapp');
+      if (!(isAdmin || (role === 'mr_moyasser' && isWhatsapp))) {
+        return error('access_denied');
+      }
+      state.appSettings[key] = args?.p_value;
+      const current = (state.rpcResults['get_public_settings'] as AnyRecord | undefined) ?? {};
+      state.rpcResults['get_public_settings'] = { ...current, [key]: args?.p_value };
       return { data: null, error: null };
     }
     return null;
@@ -2188,12 +2738,47 @@ function createMockClient() {
     if (boards) {
       return boards;
     }
+    const avatar = applyAvatarRpc(fn, args);
+    if (avatar) {
+      return avatar;
+    }
+    const ownProfile = applyOwnProfileRpc(fn, args);
+    if (ownProfile) {
+      return ownProfile;
+    }
+    const serverTime = applyServerTimeRpc(fn);
+    if (serverTime) {
+      return serverTime;
+    }
+    const suggestions = applySuggestionsRpc(fn, args);
+    if (suggestions) {
+      return suggestions;
+    }
     return { data: null, error: null };
   });
 
   const from = (table: string) => createQueryBuilder(table);
 
-  return { auth, from, rpc };
+  const storage = {
+    from: (bucket: string) => ({
+      upload: vi.fn(async (path: string) => {
+        state.storageUploads.push({ bucket, path });
+        return { data: { path }, error: null };
+      }),
+      createSignedUrl: vi.fn(async (path: string) => ({
+        data: { signedUrl: `https://storage.test/${bucket}/${path}?signed=1` },
+        error: null,
+      })),
+      remove: vi.fn(async (paths: string[]) => {
+        state.storageUploads = state.storageUploads.filter(
+          (item) => !(item.bucket === bucket && paths.includes(item.path)),
+        );
+        return { data: [], error: null };
+      }),
+    }),
+  };
+
+  return { auth, from, rpc, storage };
 }
 
 export function resetMockState() {
@@ -2209,12 +2794,22 @@ export function resetMockState() {
   state.unitCodes = [];
   state.unitPurchases = [];
   state.progress = [];
+  state.streakFreezes = [];
+  state.streakVouchers = [];
   state.notifications = [];
   state.exams = [];
   state.examQuestions = [];
   state.examAttempts = [];
   state.examAnswers = [];
   state.lessonComments = [];
+  state.suggestions = [];
+  state.storageUploads = [];
+  state.inboxLastSeenAt = null;
+  state.appSettings = {
+    suggestions_open: true,
+    suggestions_banner_message: 'banner-test',
+    suggestions_closed_message: 'closed-test',
+  };
   state.dashboardStats = makeDashboardStats();
   state.financialReports = makeFinancialReports();
   state.platformExpenses = [];
@@ -2235,6 +2830,7 @@ export function resetMockState() {
   state.reauthenticateError = null;
   state.signOutError = null;
   state.rpcCalls = [];
+  state.serverTimeNow = null;
   state.authCalls = [];
   state.queryCalls = [];
   state.authListeners = [];
@@ -2281,3 +2877,5 @@ export function mockRpcError(fn: string, message: string) {
 vi.mock('@supabase/supabase-js', () => ({
   createClient: vi.fn(() => createMockClient()),
 }));
+
+

@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+﻿import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Pause, Pencil, Play, Trash2, UserRoundCheck } from 'lucide-react';
 
+import { AvatarImage } from '../../components/AvatarImage';
+import { AvatarPreviewDialog } from '../../components/AvatarPreviewDialog';
 import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import { DirectionalArrow } from '../../components/DirectionalArrow';
@@ -15,6 +17,7 @@ import { RoleNav } from '../../components/RoleNav';
 import { PurchaseBadge, StatusBadge } from '../../components/StatusBadge';
 import { Textarea } from '../../components/Textarea';
 import { useToast } from '../../components/Toast';
+import { useAuth } from '../auth/AuthContext';
 import {
   disableStudent,
   enableStudent,
@@ -99,6 +102,9 @@ function DetailItem({
 export function StudentDetailPage() {
   const { studentId } = useParams();
   const { showToast } = useToast();
+  const { role } = useAuth();
+  const isAdmin = role === 'admin';
+  const [previewOpen, setPreviewOpen] = useState(false);
 
   const [student, setStudent] = useState<Profile | null>(null);
   const [purchases, setPurchases] = useState<UnitPurchaseWithUnit[]>([]);
@@ -291,7 +297,7 @@ export function StudentDetailPage() {
       actions={
         <Link
           to="/moyasser/students"
-          className="glass-soft inline-flex h-11 items-center gap-2 rounded-lg px-4 text-sm font-semibold text-secondary-foreground transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
+          className="inline-flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-4 text-sm font-semibold text-foreground shadow-subtle transition-colors hover:bg-surface-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-primary-strong focus-visible:ring-offset-1 sm:h-10"
         >
           <DirectionalArrow direction="back" />
           العودة إلى قائمة الطلاب
@@ -300,6 +306,39 @@ export function StudentDetailPage() {
     >
       <div className="flex flex-col gap-4">
         <Card title="معلومات الحساب">
+          <div className="mb-5 flex flex-col items-center gap-3 sm:flex-row sm:gap-4">
+            <AvatarImage
+              path={student.avatar_path}
+              alt={`صورة ${student.full_name}`}
+              className="h-20 w-20 shrink-0 rounded-full ring-2 ring-border"
+              fallback={
+                <span
+                  aria-hidden="true"
+                  className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full bg-primary-soft text-3xl font-black text-primary-strong ring-2 ring-border"
+                >
+                  {student.full_name.trim().charAt(0) || 'ط'}
+                </span>
+              }
+            />
+            <div className="min-w-0 text-center sm:text-start">
+              <p className="truncate text-lg font-bold text-foreground">{student.full_name}</p>
+              <p className="mt-1 text-sm text-foreground-muted">
+                {student.avatar_path
+                  ? 'الصورة الشخصية مرفوعة من الطالب.'
+                  : 'لم يرفع الطالب صورة شخصية بعد.'}
+              </p>
+              {isAdmin && student.avatar_path ? (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setPreviewOpen(true)}
+                >
+                  معاينة / تحميل الصورة
+                </Button>
+              ) : null}
+            </div>
+          </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <DetailItem label="الحالة">
               <StatusBadge status={student.status} deleted={isDeleted} />
@@ -549,6 +588,15 @@ export function StudentDetailPage() {
           />
         </div>
       </Modal>
+      <AvatarPreviewDialog
+        student={
+          previewOpen && student.avatar_path
+            ? { id: student.id, full_name: student.full_name, avatar_path: student.avatar_path }
+            : null
+        }
+        onClose={() => setPreviewOpen(false)}
+      />
     </LayoutShell>
   );
 }
+

@@ -8,12 +8,6 @@ verify_jwt = true
 [functions.delete-pdf]
 verify_jwt = true
 
-[functions.bunny-video-webhook]
-verify_jwt = false
-
-[functions.create-video-upload-session]
-verify_jwt = true
-
 [functions.export-audit-log]
 verify_jwt = true
 
@@ -22,15 +16,6 @@ verify_jwt = true
 
 [functions.get-pdf-signed-url]
 verify_jwt = true
-
-[functions.get-video-playback-url]
-verify_jwt = true
-
-[functions.get-video-thumbnail-url]
-verify_jwt = true
-
-[functions.recheck-video-states]
-verify_jwt = false
 
 [functions.upload-board]
 verify_jwt = true
@@ -44,7 +29,28 @@ verify_jwt = true
 [functions.upload-exam-image]
 verify_jwt = true
 
+[functions.exam-image-delete]
+verify_jwt = true
+
 [functions.get-exam-image-signed-urls]
+verify_jwt = true
+
+[functions.avatar-upload-signature]
+verify_jwt = true
+
+[functions.avatar-signed-url]
+verify_jwt = true
+
+[functions.avatar-delete]
+verify_jwt = true
+
+[functions.upload-suggestion-image]
+verify_jwt = true
+
+[functions.suggestion-image-signed-url]
+verify_jwt = true
+
+[functions.suggestion-image-delete]
 verify_jwt = true
 
 [storage.buckets.boards]
@@ -54,3 +60,7 @@ file_size_limit = "10MiB"
 [storage.buckets.exam-images]
 public = false
 file_size_limit = "5MiB"
+
+[storage.buckets.avatars]
+public = false
+file_size_limit = "2MiB"
