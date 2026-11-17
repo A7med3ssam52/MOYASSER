@@ -80,6 +80,7 @@ export function PublicResultsPage() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [grading, setGrading] = useState(false);
+  const [regrading, setRegrading] = useState(false);
 
   const statusFilter =
     tab === 'grading' ? null : tab === 'graded' ? 'graded' : tab === 'late' ? 'late' : null;
@@ -155,6 +156,32 @@ export function PublicResultsPage() {
       setGrading(false);
     }
   }, [detailId, load, showToast]);
+
+  const regradeAll = useCallback(async () => {
+    setRegrading(true);
+    let ok = 0;
+    let failed = 0;
+    try {
+      const stuck = rows.filter((row) => ['submitted', 'grading_failed', 'grading'].includes(row.status)).slice(0, 25);
+      for (const row of stuck) {
+        const result = await gradePublicExamAttempt(row.id);
+        if (result.status === 'graded' || result.status === 'already_graded') {
+          ok += 1;
+        } else {
+          failed += 1;
+        }
+      }
+      showToast(
+        failed > 0 ? `تم تصحيح ${ok} — تعذر ${failed} (جرّب تاني لما الحصة ترجع)` : `تم تصحيح ${ok} بنجاح`,
+        failed > 0 ? 'warning' : 'success',
+      );
+      void load();
+    } catch {
+      showToast('تعذر الاتصال بخادم التصحيح', 'error');
+    } finally {
+      setRegrading(false);
+    }
+  }, [rows, load, showToast]);
 
   const handleMarksSaved = useCallback(
     (updated: { objective_score: number | null; essay_score: number | null; final_score: number | null; status: string }) => {
@@ -261,6 +288,17 @@ export function PublicResultsPage() {
             </div>
             <Button variant="outline" size="md" onClick={() => void load()} aria-label="تحديث">
               <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="outline"
+              size="md"
+              loading={regrading}
+              disabled={regrading || counts.pending === 0}
+              onClick={() => void regradeAll()}
+              icon={<Sparkles className="h-4 w-4" aria-hidden="true" />}
+              title="يعيد تصحيح المقالات للمحاولات المتعثرة (لو مفيش quota متاح، هتتعمل لما الحصة ترجع)"
+            >
+              إعادة تصحيح المتعثر ({counts.pending})
             </Button>
             <Button variant="outline" size="md" onClick={exportCsv} icon={<Download className="h-4 w-4" aria-hidden="true" />}>
               تصدير CSV

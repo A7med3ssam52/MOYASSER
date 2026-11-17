@@ -205,8 +205,9 @@ export function PublicExamLivePage() {
     if (!currentExam) return;
     setPhase('submitting');
     setSubmitError(null);
+    let res;
     try {
-      await submitPublicExamAttempt(currentExam.attemptId, currentAnswers);
+      res = await submitPublicExamAttempt(currentExam.attemptId, currentAnswers);
     } catch (error) {
       // idempotent server-side; a failed call can be retried by the student
       setSubmitError(errorMessage(error));
@@ -214,40 +215,60 @@ export function PublicExamLivePage() {
       return;
     }
 
-    // Fire-and-wait for the AI grading; poll as a fallback if it lags.
-    try {
-      await gradePublicExamAttempt(currentExam.attemptId);
-    } catch {
-      /* polling below decides */
-    }
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      try {
-        const state = await getPublicExamAttempt(currentExam.attemptId);
-        if (state.phase === 'done') {
-          setResult({
-            status: state.status,
-            objectiveScore: state.objective_score,
-            essayScore: state.essay_score,
-            finalScore: state.final_score,
-            maxScore: state.max_score,
-          });
-          setPhase('result');
-          return;
-        }
-      } catch {
-        /* keep polling */
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-    }
+    // أظهر النتيجة الموضوعيوي فورًا — الأسئلة المقالية بتتصحح في الخلفية
     setResult({
-      status: 'grading_failed',
-      objectiveScore: null,
+      status: 'submitted',
+      objectiveScore: res.objective_score,
       essayScore: null,
       finalScore: null,
-      maxScore: currentExam.totalMarks,
+      maxScore: res.max_score,
     });
     setPhase('result');
+
+    // تصحيح المقالات بالذكاء الاصطناعي في الخلفية — محدش مستنية
+    void gradePublicExamAttempt(currentExam.attemptId).catch(() => {
+      /* الـ attempt بتظهر كـ grading_failed ويصححها الأستاذ من /results */
+    });
   }, []);
+
+  // تتبع نتيجة التصحيح في الخلفية (مع setInterval عشان التحديث يظهر لحظيًا)
+  useEffect(() => {
+    if (phase !== 'result' || !result || result.status !== 'submitted') return undefined;
+    const attemptId = examRef.current?.attemptId;
+    if (!attemptId) return undefined;
+    let cancelled = false;
+    let tries = 0;
+    const poll = window.setInterval(() => {
+      tries += 1;
+      void getPublicExamAttempt(attemptId)
+        .then((state) => {
+          if (cancelled) return;
+          if (state.phase === 'done') {
+            setResult((previous) =>
+              previous
+                ? {
+                    ...previous,
+                    status: state.status,
+                    objectiveScore: state.objective_score,
+                    essayScore: state.essay_score,
+                    finalScore: state.final_score,
+                    maxScore: state.max_score,
+                  }
+                : previous,
+            );
+            window.clearInterval(poll);
+          }
+        })
+        .catch(() => {
+          /* استمر في المحاولة — الـ grade عند الداتا بيز مش في المتصفح */
+        });
+      if (tries >= 60) window.clearInterval(poll);
+    }, 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+    };
+  }, [phase, result]);
 
   const handleSubmitClick = useCallback(() => {
     setSubmitConfirmOpen(true);
@@ -269,7 +290,7 @@ export function PublicExamLivePage() {
 
   // Warn on accidental refresh/exit while taking
   useEffect(() => {
-    if (phase !== 'taking') return undefined;
+    if (phase !== 'taking' && phase !== 'submitting') return undefined;
     const handler = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = '';
@@ -487,7 +508,7 @@ export function PublicExamLivePage() {
       ) : null}
 
       {/* ============ الإمتحان ============ */}
-      {phase === 'taking' || phase === 'submitting' ? (
+      {phase === 'taking' ? (
         exam ? (
           <div className="pb-28 sm:pb-32">
             {/* الشريط اللاصق */}
@@ -513,7 +534,6 @@ export function PublicExamLivePage() {
                 <Button
                   size="sm"
                   onClick={handleSubmitClick}
-                  disabled={phase === 'submitting'}
                   icon={<ClipboardCheck className="h-4 w-4" aria-hidden="true" />}
                 >
                   تسليم
@@ -592,8 +612,6 @@ export function PublicExamLivePage() {
                 </p>
                 <Button
                   onClick={handleSubmitClick}
-                  disabled={phase === 'submitting'}
-                  loading={phase === 'submitting'}
                   className="w-full sm:w-auto"
                   icon={<ClipboardCheck className="h-4 w-4" aria-hidden="true" />}
                 >
@@ -636,11 +654,7 @@ export function PublicExamLivePage() {
         </div>
       ) : null}
 
-      {phase === 'submitting' ? (
-        <div className="pointer-events-none fixed inset-0 z-30 flex items-center justify-center bg-background/40">
-          <Loader2 className="h-10 w-10 animate-spin text-primary-strong" aria-hidden="true" />
-        </div>
-      ) : null}
+      {phase === 'submitting' ? <GradingView /> : null}
     </div>
   );
 }
@@ -758,14 +772,85 @@ function ExamQuestionCard({
 // ============================================================
 // شاشة النتيجة
 // ============================================================
+function GradingView() {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setElapsedSeconds((value) => value + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  const clock = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+
+  return (
+    <main
+      role="status"
+      aria-live="polite"
+      className="flex min-h-dvh flex-col items-center justify-center px-4 py-10 text-center"
+    >
+      <div className="relative mb-6 flex h-24 w-24 items-center justify-center sm:h-28 sm:w-28">
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 rounded-full bg-primary-soft/50 blur-2xl"
+        />
+        <span
+          aria-hidden="true"
+          className="absolute inset-0 animate-spin rounded-full border-4 border-primary/15 border-t-primary-strong"
+        />
+        <ClipboardCheck
+          className="relative h-10 w-10 text-primary-strong sm:h-12 sm:w-12"
+          aria-hidden="true"
+        />
+      </div>
+      <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-foreground-subtle">
+        استلمنا إجاباتك
+      </p>
+      <h1 className="mt-2 text-2xl font-black leading-snug text-foreground sm:text-3xl">
+        المنصة بتصحح الإمتحان حالياً…
+      </h1>
+      <p className="mt-3 max-w-md leading-7 text-foreground-muted">
+        بنراجع الأسئلة الموضوعية وبنصحح المقالية بالذكاء الاصطناعي.
+        <br />
+        ثواني وبتظهر درجتك كاملة…
+      </p>
+      <p className="mt-6 inline-flex items-center gap-2 rounded-2xl border border-border bg-surface px-5 py-2.5 font-mono text-lg font-bold tabular-nums text-primary-strong">
+        <Timer className="h-5 w-5" aria-hidden="true" />
+        {clock}
+      </p>
+      <p className="mt-6 max-w-xs text-[11px] leading-6 text-foreground-subtle">
+        من فضلك ما تقفلش الصفحة أو تعمل تحديث.
+        <br />
+        إجاباتك محفوظة على السيرفر — لو حصلت أي مشكلة، نتيجتك هتظهر هنا تاني لما ترجع.
+      </p>
+    </main>
+  );
+}
+
 function ResultView({ result }: { result: ExamResult }) {
   const graded = result.status === 'graded';
   const failed = result.status === 'grading_failed';
+  const pending = result.status === 'submitted' || result.status === 'grading';
   return (
     <main className="flex min-h-dvh flex-col items-center justify-center px-4 py-12 text-center">
       <CheckCircle2 className="mb-4 h-16 w-16 text-primary-strong" aria-hidden="true" />
       <h1 className="text-2xl font-black">تم تسليم الإمتحان</h1>
-      {graded && result.finalScore !== null ? (
+      {pending ? (
+        <>
+          <p className="mt-6 text-5xl font-black tabular-nums text-foreground">{result.objectiveScore ?? '—'}</p>
+          <p className="mt-1 text-sm font-bold text-foreground-muted">درجتك في الأسئلة الموضوعية (من 40)</p>
+          <div className="mt-6 flex flex-col items-center gap-2 rounded-2xl border border-border bg-surface px-6 py-5 text-sm text-foreground-muted">
+            <Loader2 className="h-6 w-6 animate-spin text-primary-strong" aria-hidden="true" />
+            جاري تصحيح الأسئلة المقالية بالذكاء الاصطناعي…
+            <span className="max-w-xs leading-6 text-xs text-foreground-subtle">
+              الدرجتين المقاليتين هيضافوا تلقائيًا — يقدر يتأخر شوية لو مفيش quota متاح دلوقتي.
+            </span>
+          </div>
+        </>
+      ) : graded && result.finalScore !== null ? (
         <>
           <p className="mt-6 text-6xl font-black tabular-nums text-primary-strong">
             {result.finalScore}
@@ -786,11 +871,7 @@ function ResultView({ result }: { result: ExamResult }) {
         <p className="mt-3 max-w-md leading-7 text-foreground-muted">
           تم استلام إجاباتك بنجاح. لم يكتمل تصحيح الأسئلة المقالية الآن — ستظهر درجتك بعد مراجعة الأستاذ.
         </p>
-      ) : (
-        <p className="mt-3 max-w-md leading-7 text-foreground-muted">
-          جاري تصحيح الأسئلة المقالية… إذا أغلقت الصفحة ستظل إجاباتك محفوظة، ويمكنك العودة لاحقًا لرؤية النتيجة.
-        </p>
-      )}
+      ) : null}
       <p className="mt-8 max-w-md text-xs leading-6 text-foreground-subtle">
         شكرًا لمشاركتك في امتحان الدراسات الاجتماعية — بالتوفيق في باقي الإمتحانات!
       </p>
