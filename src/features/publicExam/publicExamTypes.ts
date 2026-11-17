@@ -25,8 +25,11 @@ export type PublicExamStartResult =
   | {
       phase: 'locked';
       status: PublicExamAttemptStatus;
+      attempt_id: string;
       final_score: number | null;
       max_score: number | null;
+      recheck_requested_at: string | null;
+      recheck_reason: string | null;
       server_now: string;
     }
   | {
@@ -60,6 +63,8 @@ export type PublicExamAttemptState =
       essay_score: number | null;
       max_score: number | null;
       submitted_at: string | null;
+      recheck_requested_at: string | null;
+      recheck_reason: string | null;
       server_now: string;
     };
 
@@ -86,6 +91,8 @@ export interface PublicExamAttemptRow {
   final_score: number | null;
   max_score: number | null;
   created_at: string;
+  recheck_requested_at: string | null;
+  recheck_reason: string | null;
 }
 
 export interface PublicExamAttemptDetailItem {
@@ -118,6 +125,8 @@ export interface PublicExamAttemptDetail {
     final_score: number | null;
     max_score: number | null;
     ai_raw: unknown;
+    recheck_requested_at: string | null;
+    recheck_reason: string | null;
   };
   items: PublicExamAttemptDetailItem[];
 }
@@ -128,6 +137,13 @@ export interface PublicExamGradingResult {
   objective_score: number | null;
   essay_score: number | null;
   error?: string;
+}
+
+export interface PublicExamRecheckResult {
+  ok: boolean;
+  already_requested: boolean;
+  recheck_requested_at: string | null;
+  recheck_reason: string | null;
 }
 
 export const PUBLIC_EXAM_KEY = 'sades_grade6' as const;

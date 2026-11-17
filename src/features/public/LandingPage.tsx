@@ -924,8 +924,8 @@ export function LandingPage() {
           </div>
           <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-border-muted pt-6 sm:flex-row">
             <p className="text-xs text-foreground-subtle">
-              © {new Date().getFullYear()} محمد ياسر. جميع الحقوق محفوظة — منصة تعليمية مصرية لكل
-              الصفوف.
+              © {new Date().getFullYear()} منصة مستر محمد ياسر. جميع الحقوق محفوظة — منصة تعليمية مصرية
+              لكل الصفوف.
             </p>
             <nav className="flex items-center gap-4 text-sm" aria-label="روابط سريعة">
               <Link to="/" className="text-foreground-muted hover:text-foreground">

@@ -139,12 +139,8 @@ export function AppRoutes() {
         <Route path="/terms" element={<TermsPage />} />
         {/* Public: درجة-6 exam — عام بدون تسجيل دخول (لايف 17 نوفمبر 2026) */}
         <Route path="/exam" element={<PublicExamPage />} />
-        {/* Staff-only: نتائج الامتحان العام */}
-        <Route element={<ProtectedRoute />}>
-          <Route path="/results" element={<RoleGuard allow={['mr_moyasser', 'admin', 'teacher']} />}>
-            <Route index element={<PublicResultsPage />} />
-          </Route>
-        </Route>
+        {/* Public: نتائج الامتحان العام — قراءة بدون لوجين؛ التصحيح اليدوي للطاقم فقط (role-gated من الداخل) */}
+        <Route path="/results" element={<PublicResultsPage />} />
 
         {/* Labs: interactive demo (noindex, no backend, no persistence) */}
         <Route path="/labs/exam" element={<LabsExamPage />} />

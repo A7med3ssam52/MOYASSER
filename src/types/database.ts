@@ -1285,6 +1285,13 @@ export interface Database {
         };
         Returns: unknown;
       };
+      request_public_exam_recheck: {
+        Args: {
+          p_attempt_id: string;
+          p_reason?: string | null;
+        };
+        Returns: unknown;
+      };
     };
   };
 }

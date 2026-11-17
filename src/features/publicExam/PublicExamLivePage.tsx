@@ -7,6 +7,7 @@ import {
   FileText,
   Loader2,
   Lock,
+  PenLine,
   Timer,
   TriangleAlert,
 } from 'lucide-react';
@@ -20,6 +21,7 @@ import { useServerTime } from '../../lib/serverTime';
 import {
   getPublicExamAttempt,
   gradePublicExamAttempt,
+  requestPublicExamRecheck,
   savePublicExamAnswers,
   startPublicExamAttempt,
   submitPublicExamAttempt,
@@ -59,11 +61,14 @@ interface ExamSession {
 }
 
 interface ExamResult {
+  attemptId: string;
   status: PublicExamAttemptStatus;
   objectiveScore: number | null;
   essayScore: number | null;
   finalScore: number | null;
   maxScore: number | null;
+  recheckRequested: boolean;
+  recheckReason: string | null;
 }
 
 const ERROR_MESSAGES: Record<string, string> = {
@@ -144,11 +149,14 @@ export function PublicExamLivePage() {
         }
         // done
         setResult({
+          attemptId: storedId,
           status: state.status,
           objectiveScore: state.objective_score,
           essayScore: state.essay_score,
           finalScore: state.final_score,
           maxScore: state.max_score,
+          recheckRequested: Boolean(state.recheck_requested_at),
+          recheckReason: state.recheck_reason ?? null,
         });
         setPhase('result');
       })
@@ -217,11 +225,14 @@ export function PublicExamLivePage() {
 
     // أظهر النتيجة الموضوعيوي فورًا — الأسئلة المقالية بتتصحح في الخلفية
     setResult({
+      attemptId: currentExam.attemptId,
       status: 'submitted',
       objectiveScore: res.objective_score,
       essayScore: null,
       finalScore: null,
       maxScore: res.max_score,
+      recheckRequested: false,
+      recheckReason: null,
     });
     setPhase('result');
 
@@ -341,11 +352,14 @@ export function PublicExamLivePage() {
         }
         if (resultPayload.phase === 'locked') {
           setResult({
+            attemptId: resultPayload.attempt_id,
             status: resultPayload.status,
             objectiveScore: null,
             essayScore: null,
             finalScore: resultPayload.final_score,
             maxScore: resultPayload.max_score,
+            recheckRequested: Boolean(resultPayload.recheck_requested_at),
+            recheckReason: resultPayload.recheck_reason ?? null,
           });
           setPhase('locked');
           return;
@@ -504,6 +518,15 @@ export function PublicExamLivePage() {
             </p>
           ) : null}
           <p className="mt-2 max-w-md leading-7 text-foreground-muted">لا يمكن إعادة الإمتحان — المحاولة واحدة فقط لكل رقم تليفون.</p>
+          {result ? (
+            <div className="mt-6 w-full max-w-md">
+              <RecheckSection
+                attemptId={result.attemptId}
+                requested={result.recheckRequested}
+                reason={result.recheckReason}
+              />
+            </div>
+          ) : null}
         </main>
       ) : null}
 
@@ -872,9 +895,152 @@ function ResultView({ result }: { result: ExamResult }) {
           تم استلام إجاباتك بنجاح. لم يكتمل تصحيح الأسئلة المقالية الآن — ستظهر درجتك بعد مراجعة الأستاذ.
         </p>
       ) : null}
+
+      {/* طلب إعادة تصحيح يدوي — يظهر في كل حالات ما بعد التسليم */}
+      <div className="mt-6 w-full max-w-md">
+        <RecheckSection attemptId={result.attemptId} requested={result.recheckRequested} reason={result.recheckReason} />
+      </div>
+
       <p className="mt-8 max-w-md text-xs leading-6 text-foreground-subtle">
         شكرًا لمشاركتك في امتحان الدراسات الاجتماعية — بالتوفيق في باقي الإمتحانات!
       </p>
     </main>
+  );
+}
+
+// ============================================================
+// طلب إعادة تصحيح يدوي — يظهر للطالب في شاشة النتيجة بدون لوجين
+// ============================================================
+const RECHECK_ERROR_MESSAGES: Record<string, string> = {
+  attempt_not_found: 'محاولتك غير موجودة — افتح الصفحة مرة أخرى',
+  not_submitted: 'لازم تسلّم الإمتحان الأول ثم تقدر تطلب إعادة التصحيح',
+  reason_too_long: 'الملاحظة طويلة — الحد الأقصى 500 حرف',
+};
+
+function recheckErrorMessage(error: unknown): string {
+  if (error instanceof PublicExamError && error.code && RECHECK_ERROR_MESSAGES[error.code]) {
+    return RECHECK_ERROR_MESSAGES[error.code];
+  }
+  return 'تعذر إرسال الطلب — حاول مرة أخرى';
+}
+
+interface RecheckSectionProps {
+  attemptId: string;
+  requested: boolean;
+  reason: string | null;
+}
+
+function RecheckSection({ attemptId, requested: requestedProp, reason: reasonProp }: RecheckSectionProps) {
+  const [requested, setRequested] = useState(requestedProp);
+  const [reason, setReason] = useState(reasonProp);
+  const [open, setOpen] = useState(false);
+  const [note, setNote] = useState(reasonProp ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // لو اتحدّثت القيم من الخادم (مثلاً بعد الـ polling) حدّث الواجهة
+  useEffect(() => {
+    setRequested(requestedProp);
+    setReason(reasonProp);
+  }, [requestedProp, reasonProp]);
+
+  const submit = useCallback(async () => {
+    setSubmitting(true);
+    setError(null);
+    const trimmed = note.trim();
+    try {
+      const res = await requestPublicExamRecheck(attemptId, trimmed || null);
+      setRequested(true);
+      setReason(res.recheck_reason ?? (trimmed || null));
+      setOpen(false);
+    } catch (submitError) {
+      setError(recheckErrorMessage(submitError));
+    } finally {
+      setSubmitting(false);
+    }
+  }, [attemptId, note]);
+
+  if (requested && !open) {
+    return (
+      <div className="rounded-2xl border border-border bg-surface px-4 py-4 text-sm">
+        <p className="flex items-center justify-center gap-2 font-bold text-primary-strong">
+          <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+          تم استلام طلب إعادة التصحيح
+        </p>
+        <p className="mt-1 text-xs leading-6 text-foreground-muted">
+          هيتم مراجعة درجتك يدويًا من الأستاذ — ممكن تتغيّر الدرجة بعد المراجعة.
+        </p>
+        {reason ? (
+          <p className="mt-2 whitespace-pre-wrap rounded-xl bg-surface-muted px-3 py-2 text-xs leading-6 text-foreground-muted">
+            <span className="font-bold text-foreground">ملاحظتك: </span>
+            {reason}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            setNote(reason ?? '');
+            setOpen(true);
+          }}
+          className="mt-3 text-xs font-bold text-primary-strong underline-offset-4 hover:underline"
+        >
+          تعديل الملاحظة
+        </button>
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setNote(reason ?? '');
+          setOpen(true);
+        }}
+        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-border bg-surface px-4 py-3 text-sm font-bold text-foreground transition-colors hover:border-primary/40 hover:text-primary-strong"
+      >
+        <PenLine className="h-4 w-4" aria-hidden="true" />
+        طلب إعادة تصحيح يدوي
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="rounded-2xl border border-border bg-surface px-4 py-4 text-start"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void submit();
+      }}
+    >
+      <Textarea
+        id="recheck-note"
+        label="طلب إعادة تصحيح يدوي — اكتب ملاحظتك (اختياري)"
+        rows={3}
+        maxLength={500}
+        placeholder="مثلاً: أنا شايف إن إجابتي في سؤال كذا صح… (اختياري)"
+        value={note}
+        onChange={(event) => setNote(event.target.value)}
+        className="text-base sm:text-sm"
+      />
+      <div className="mt-1 flex items-center justify-between gap-2 text-[11px] text-foreground-subtle">
+        <span>هتتم مراجعة درجتك من الأستاذ — الدرجة ممكن تتغيّر بعد المراجعة</span>
+        <span className="tabular-nums">{note.length}/500</span>
+      </div>
+      {error ? (
+        <p role="alert" className="mt-2 rounded-xl border border-error/40 bg-error/10 px-3 py-2 text-xs font-medium text-error">
+          {error}
+        </p>
+      ) : null}
+      <div className="mt-3 flex items-center gap-2">
+        <Button type="submit" size="sm" loading={submitting} className="flex-1">
+          إرسال الطلب
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => setOpen(false)} disabled={submitting}>
+          إلغاء
+        </Button>
+      </div>
+    </form>
   );
 }

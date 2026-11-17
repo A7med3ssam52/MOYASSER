@@ -27,13 +27,13 @@ import { jsonResponse, preflightResponse } from '../_shared/cors.ts';
 
 const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 const MODEL_CHAIN = (Deno.env.get('GEMINI_MODEL_CHAIN') ??
-  'gemini-2.5-flash,gemini-2.5-flash-lite,gemini-2.0-flash,gemini-1.5-flash')
+  'gemini-3.1-flash-lite,gemini-3-flash-preview,gemini-3.5-flash,gemini-3.6-flash,gemini-3.7-flash,gemini-3.8-flash,gemini-flash-latest')
   .split(',')
   .map((model) => model.trim())
   .filter(Boolean);
 const PER_REQUEST_TIMEOUT_MS = 20_000;
 const MAX_RETRIES_PER_MODEL = 2;
-const BACKOFF_MS = [1000, 3000];
+const BACKOFF_MS = [1000, 2000];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- supabase-js rows come back untyped here
@@ -140,10 +140,17 @@ async function callGemini(apiKey: string, prompt: string): Promise<GeminiResult>
           signal: AbortSignal.timeout(PER_REQUEST_TIMEOUT_MS),
         });
 
-        if (response.status === 429 || response.status >= 500) {
+        if (response.status === 429) {
+          // Quota per-model is the hard constraint (free tier ≈20 req/day/model).
+          // Retrying the same model only wastes quota — try the next one.
+          lastError = new Error('gemini_http_429');
+          break;
+        }
+        if (response.status >= 500) {
+          // Transient capacity issue — one short backoff then next attempt/model.
           lastError = new Error(`gemini_http_${response.status}`);
           if (attempt < MAX_RETRIES_PER_MODEL - 1) {
-            await sleep(BACKOFF_MS[attempt] ?? 3000);
+            await sleep(BACKOFF_MS[attempt] ?? 1000);
           }
           continue;
         }

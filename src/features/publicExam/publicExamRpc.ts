@@ -6,6 +6,7 @@ import type {
   PublicExamAttemptRow,
   PublicExamAttemptState,
   PublicExamGradingResult,
+  PublicExamRecheckResult,
   PublicExamStartResult,
   PublicExamSubmitResult,
 } from './publicExamTypes';
@@ -75,6 +76,17 @@ export function submitPublicExamAttempt(
   }));
 }
 
+/** Public/anon: ask staff for a manual re-correction of this attempt (optional note, max 500 chars). */
+export function requestPublicExamRecheck(
+  attemptId: string,
+  reason: string | null,
+): Promise<PublicExamRecheckResult> {
+  return unwrapRpc(getSupabaseClient().rpc('request_public_exam_recheck', {
+    p_attempt_id: attemptId,
+    p_reason: reason,
+  }));
+}
+
 /** Direct call to the grading Edge Function (verify_jwt=false, anon-safe, idempotent). */
 export async function gradePublicExamAttempt(attemptId: string): Promise<PublicExamGradingResult> {
   const res = await fetch(`${supabaseUrl}/functions/v1/grade-public-exam`, {
@@ -84,6 +96,8 @@ export async function gradePublicExamAttempt(attemptId: string): Promise<PublicE
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ attempt_id: attemptId }),
+    // Don't let the grading call hang the UI forever — the poll loop picks up from there.
+    signal: AbortSignal.timeout(60_000),
   });
   const payload = (await res.json().catch(() => ({}))) as Partial<PublicExamGradingResult> & {
     error?: string;
