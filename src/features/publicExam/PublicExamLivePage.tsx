@@ -381,7 +381,8 @@ export function PublicExamLivePage() {
             <form onSubmit={handleStart} className="flex flex-col gap-4" noValidate>
               <Input
                 label="الاسم الرباعي كاملًا"
-                placeholder="مثال: محمد أحمد علي محمود"
+                placeholder="مثال: يوسف خالد عبد الرحمن محمود"
+                className="text-base sm:text-sm"
                 value={fullName}
                 onChange={(event) => {
                   setFullName(event.target.value);
@@ -397,7 +398,7 @@ export function PublicExamLivePage() {
                 placeholder="01xxxxxxxxx"
                 inputMode="numeric"
                 dir="ltr"
-                className="text-left"
+                className="text-left text-base sm:text-sm"
                 maxLength={11}
                 value={phone}
                 onChange={(event) => {
@@ -488,10 +489,10 @@ export function PublicExamLivePage() {
       {/* ============ الإمتحان ============ */}
       {phase === 'taking' || phase === 'submitting' ? (
         exam ? (
-          <div className="pb-40">
+          <div className="pb-28 sm:pb-32">
             {/* الشريط اللاصق */}
             <header className="sticky top-0 z-40 border-b border-border bg-surface/95 backdrop-blur">
-              <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-2">
+              <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 px-3 py-2 sm:gap-3 sm:px-4">
                 <div className="min-w-0">
                   <p className="truncate text-xs text-foreground-subtle">{exam.fullName}</p>
                   <p className="text-[11px] text-foreground-subtle">
@@ -499,7 +500,7 @@ export function PublicExamLivePage() {
                   </p>
                 </div>
                 <div
-                  className={`flex items-center gap-2 rounded-2xl border px-3 py-1.5 font-mono text-lg font-bold tabular-nums sm:text-xl ${
+                  className={`flex items-center gap-1.5 sm:gap-2 rounded-2xl border px-2 py-1.5 sm:px-3 font-mono text-base font-bold tabular-nums sm:text-xl ${
                     remainingMs !== null && remainingMs < 5 * 60_000
                       ? 'border-error/50 bg-error/10 text-error'
                       : 'border-border bg-surface-muted text-foreground'
@@ -550,7 +551,7 @@ export function PublicExamLivePage() {
                         onClick={() => setCurrentIndex(index)}
                         aria-current={active ? 'true' : undefined}
                         aria-label={`السؤال ${index + 1}${answered ? ' (تمت الإجابة)' : ''}`}
-                        className={`h-10 w-10 shrink-0 rounded-xl border text-sm font-bold transition-colors ${
+                        className={`h-11 w-11 sm:h-10 sm:w-10 shrink-0 rounded-xl border text-sm font-bold transition-colors ${
                           active
                             ? 'border-primary-strong bg-primary-soft text-primary-strong'
                             : answered
@@ -584,15 +585,16 @@ export function PublicExamLivePage() {
             </main>
 
             {/* شريط التسليم السفلي */}
-            <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur">
-              <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-4 py-3">
-                <p className="text-xs text-foreground-muted">
+            <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface/95 backdrop-blur pb-[env(safe-area-inset-bottom)]">
+              <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-3 px-3 py-2.5 sm:px-4 sm:py-3">
+                <p className="hidden text-xs leading-5 text-foreground-muted sm:block">
                   الإجابات تُحفظ تلقائيًا — {totalAnswered} من {exam.questions.length} تم حلها
                 </p>
                 <Button
                   onClick={handleSubmitClick}
                   disabled={phase === 'submitting'}
                   loading={phase === 'submitting'}
+                  className="w-full sm:w-auto"
                   icon={<ClipboardCheck className="h-4 w-4" aria-hidden="true" />}
                 >
                   تسليم الإمتحان
@@ -686,7 +688,7 @@ function ExamQuestionCard({
           <img
             src={question.image_path}
             alt="خريطة الوطن العربي"
-            className="mx-auto max-h-72 w-full object-contain"
+            className="mx-auto max-h-48 w-full object-contain sm:max-h-72"
             loading="lazy"
           />
         </figure>
@@ -731,6 +733,7 @@ function ExamQuestionCard({
           <Input
             label="إجابتك"
             placeholder="اكتب إجابتك هنا…"
+            className="text-base sm:text-sm"
             value={answer}
             onChange={(event) => onChange(event.target.value)}
             autoComplete="off"
@@ -741,6 +744,7 @@ function ExamQuestionCard({
           <Textarea
             label="إجابتك"
             placeholder="اكتب إجابتك هنا…"
+            className="text-base sm:text-sm"
             rows={5}
             value={answer}
             onChange={(event) => onChange(event.target.value)}
