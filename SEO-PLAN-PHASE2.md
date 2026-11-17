@@ -403,7 +403,7 @@
 
 1. **لا تبدأ بكود قبل قراءة هذه الوثيقة كاملة + فحص `C:\Users\admin\Desktop\MOYASSER\index.html` و `vite.config.ts` و `vercel.json` و `src/app/router.tsx` و `src/features/public/LandingPage.tsx` الحالي.**
 2. **نفّذ P0 أولاً بالترتيب المذكور (T-01 → T-10). لا تقفز لـ P1 قبل إغلاق كل Checklist P0.**
-3. **كل تعديل يجب أن يحافظ على:** PWA يعمل + Auth يعمل + Supabase `nfusbrktrqfrnaetetmr` يعمل + Bunny يعمل + RTL لا ينكسر + التصميم Aurora Night لا يتغير.
+3. **كل تعديل يجب أن يحافظ على:** PWA يعمل + Auth يعمل + Supabase `uhpssthxwthlspxuaovb` يعمل + Bunny يعمل + RTL لا ينكسر + التصميم Aurora Night لا يتغير.
 4. **استخدم `react-helmet-async` وليس `react-helmet` (الأخير deprecated).**
 5. **لا تكشف أي محتوى محمي:** راجع `DATABASE.md` و `SECURITY.md` — Teaser فقط.
 6. **بعد كل مرحلة:** شغّل `npm run build` + `npm run preview` + `npx tsc --noEmit` + `npm test` + Lighthouse + Rich Results Test + `curl` بدون JS. أي فشل = إصلاح فوري قبل المتابعة.

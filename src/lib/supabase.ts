@@ -7,16 +7,17 @@ const envSupabasePublishableKey = (
   import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined
 )?.trim() ?? '';
 
-// Fallback is intentional — .env.production is committed so any host can build without extra setup (see .env.production:2)
-export const supabaseUrl = envSupabaseUrl || 'https://nfusbrktrqfrnaetetmr.supabase.co';
+// Fallback is intentional — any host can build without extra setup and still
+// land on the current project (.env.local / Vercel env vars take precedence).
+export const supabaseUrl = envSupabaseUrl || 'https://uhpssthxwthlspxuaovb.supabase.co';
 export const supabasePublishableKey =
-  envSupabasePublishableKey || 'sb_publishable_FCxdA2r2MOReIzNfTKEtLA_3AtTiMqp';
+  envSupabasePublishableKey || 'sb_publishable_rFlsodMRLxOMKscTAbv8hg_yNpXvFLO';
 
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabasePublishableKey);
 
 if (!envSupabaseUrl || !envSupabasePublishableKey) {
   console.warn(
-    '[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY missing at build — using committed fallback (.env.production). Set Vercel Env to silence.',
+    '[supabase] VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY missing at build — using built-in fallback (current project). Set Vercel Env to silence.',
   );
 }
 

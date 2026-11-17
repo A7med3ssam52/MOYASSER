@@ -4,7 +4,7 @@
 **Status:** Contract document for all implementation phases (0–11).
 **Project root:** `C:\Users\admin\Desktop\MOYASSER` (greenfield project; see PLAN.md §22 for live implementation status).
 **Frontend env (existing):**
-- `VITE_SUPABASE_URL=https://nfusbrktrqfrnaetetmr.supabase.co`
+- `VITE_SUPABASE_URL=https://uhpssthxwthlspxuaovb.supabase.co`
 - `VITE_SUPABASE_PUBLISHABLE_KEY=<provided separately>`
 
 All assumptions are collected in **Section 19 (Assumptions Register)** and referenced as `A#` throughout.

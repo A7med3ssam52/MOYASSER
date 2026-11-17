@@ -53,7 +53,7 @@ External privileged APIs (Bunny Video/Storage, Storage signed URLs, CSV export)
 Key principles: RLS on all 14 tables (forced); mutations through typed RPCs (SECURITY DEFINER, audited); Edge Functions hold all secrets and re-check role + active profile per request; the browser never holds service-role/Bunny secrets; sign-in gate trigger + session revocation + RLS + Edge Function checks provide defense-in-depth.
 
 **Frontend env (existing):**
-- `VITE_SUPABASE_URL=https://nfusbrktrqfrnaetetmr.supabase.co`
+- `VITE_SUPABASE_URL=https://uhpssthxwthlspxuaovb.supabase.co`
 - `VITE_SUPABASE_PUBLISHABLE_KEY=<provided separately>`
 
 ---
@@ -117,7 +117,7 @@ See `.env.example`. All names:
 
 | Variable | Where | Required | Description |
 |---|---|---|---|
-| `VITE_SUPABASE_URL` | frontend `.env.local` | yes | Supabase project URL (`https://nfusbrktrqfrnaetetmr.supabase.co`) |
+| `VITE_SUPABASE_URL` | frontend `.env.local` | yes | Supabase project URL (`https://uhpssthxwthlspxuaovb.supabase.co`) |
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | frontend `.env.local` | yes | Supabase publishable (anon) key — the ONLY key in frontend code |
 | `BUNNY_API_KEY` | Edge Function secret | Phase 5 | Bunny API key (server-side privileged calls) |
 | `BUNNY_LIBRARY_ID` | Edge Function secret | Phase 5 | Bunny video library ID |

@@ -4,7 +4,7 @@
 
 **Project root:** `C:\Users\admin\Desktop\MOYASSER`
 **Frontend env (existing):**
-- `VITE_SUPABASE_URL=https://nfusbrktrqfrnaetetmr.supabase.co`
+- `VITE_SUPABASE_URL=https://uhpssthxwthlspxuaovb.supabase.co`
 - `VITE_SUPABASE_PUBLISHABLE_KEY=<provided separately>`
 
 ---

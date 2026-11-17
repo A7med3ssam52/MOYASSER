@@ -561,7 +561,7 @@ unit_purchases_insert_via_rpc                FOR INSERT WITH CHECK (false);  -- 
 إزالة السطرين 6–7 (`[functions.expire-subscriptions]` و `verify_jwt = false`). النتيجة:
 
 ```toml
-project_id = "nfusbrktrqfrnaetetmr"
+project_id = "uhpssthxwthlspxuaovb"
 
 [functions]
 enabled = true

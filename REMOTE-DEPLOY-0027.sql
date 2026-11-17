@@ -1,6 +1,6 @@
 -- =====================================================================
 -- REMOTE DEPLOY - "أزمة الصفوف" fix (grades crisis)
--- Apply to the remote project (https://nfusbrktrqfrnaetetmr.supabase.co)
+-- Apply to the remote project (https://uhpssthxwthlspxuaovb.supabase.co)
 -- via Dashboard > SQL Editor in ONE block, or run the whole file.
 --
 -- Contents:

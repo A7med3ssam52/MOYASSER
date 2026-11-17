@@ -31,7 +31,7 @@ Do not consider a phase complete because the UI renders or the TypeScript build 
 Frontend environment:
 
 ```env
-VITE_SUPABASE_URL=https://nfusbrktrqfrnaetetmr.supabase.co
+VITE_SUPABASE_URL=https://uhpssthxwthlspxuaovb.supabase.co
 VITE_SUPABASE_PUBLISHABLE_KEY=<provided separately in the environment>
 ```
 
