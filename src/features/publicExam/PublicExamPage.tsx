@@ -3,9 +3,11 @@ import { Clock3, Hourglass } from 'lucide-react';
 import { SeoHead } from '../../components/SeoHead';
 import { useServerTime } from '../../lib/serverTime';
 
+import { PublicExamLivePage } from './PublicExamLivePage';
+
 /** موعد فتح الإمتحان — ثابت للكل (توقيت القاهرة). */
 const EXAM_OPENS_AT_ISO = '2026-11-17T22:30:00+02:00';
-const EXAM_OPENS_LABEL = 'اليوم 17 نوفمبر 2026 — 10:30 مساءً';
+const EXAM_OPENS_LABEL = 'الساعة 10:30 مساء اليوم (17 نوفمبر 2026) — وحتى نهاية يوم 18 نوفمبر';
 
 function remainingParts(remainingMs: number): { hours: string; minutes: string; seconds: string } {
   const totalSeconds = Math.max(0, Math.floor(remainingMs / 1000));
@@ -23,6 +25,11 @@ export function PublicExamPage() {
   const remainingMs = Math.max(0, Date.parse(EXAM_OPENS_AT_ISO) - nowMs);
   const started = remainingMs === 0;
   const { hours, minutes, seconds } = remainingParts(remainingMs);
+
+  // بعد فتح الإمتحان: الراوت بيرن تلقائيًا للإمتحان الحي (بدون إعادة تحميل)
+  if (started) {
+    return <PublicExamLivePage />;
+  }
 
   return (
     <div dir="rtl" className="relative flex min-h-dvh flex-col overflow-hidden bg-background text-foreground">
@@ -74,15 +81,17 @@ export function PublicExamPage() {
           <p className="mt-8 animate-pulse text-lg font-black text-primary-strong">الإمتحان على وشك البدء — ترقبوا</p>
         ) : (
           <p className="mt-8 text-sm leading-7 text-foreground-muted">
-            استعدوا — الإمتحان هيفتح قريبًا جدًا.
+            استعدوا — الإمتحان هيفتح الساعة 10:30 مساءً (بتوقيت القاهرة).
             <br />
-            تابعوا الصفحة دي، والرابط هيشتغل تلقائيًا عند فتح الإمتحان.
+            وعند الفتح الصفحة دي هتتحول تلقائيًا للإمتحان — كل طالب يدخل ياخد ساعة كاملة.
+            <br />
+            والإمتحان هيفضل متاحًا حتى نهاية يوم 18 نوفمبر 2026.
           </p>
         )}
       </main>
 
       <footer className="relative border-t border-border bg-surface/60 px-4 py-3 text-center text-[11px] text-foreground-subtle">
-        منصة مُيسّر — بالتوفيق لجميع الطلبة
+        منصة مستر محمد ياسر — بالتوفيق لجميع الطلبة
       </footer>
     </div>
   );

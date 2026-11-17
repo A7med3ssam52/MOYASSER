@@ -34,8 +34,8 @@ import {
   validatePublicExamPhone,
 } from './validation';
 
-const EXAM_OPENS_LABEL = 'اليوم 17 نوفمبر 2026 — 9:30 مساءً';
-const EXAM_CLOSES_LABEL = '10:30 مساءً';
+const EXAM_OPENS_LABEL = 'من الساعة 10:30 مساء اليوم (17 نوفمبر 2026) وحتى نهاية يوم 18 نوفمبر';
+const EXAM_CLOSES_LABEL = 'منتصف الليل (00:00) نهاية يوم 18 نوفمبر 2026';
 const AUTOSAVE_DEBOUNCE_MS = 700;
 
 type Phase =
