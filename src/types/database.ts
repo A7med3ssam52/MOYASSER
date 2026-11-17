@@ -1248,6 +1248,43 @@ export interface Database {
       };
       mark_suggestions_seen: { Args: never; Returns: number };
       set_app_setting: { Args: { p_key: string; p_value: unknown }; Returns: void };
+      start_public_exam_attempt: {
+        Args: { p_full_name: string; p_phone: string };
+        Returns: unknown;
+      };
+      get_public_exam_attempt: {
+        Args: { p_attempt_id: string };
+        Returns: unknown;
+      };
+      save_public_exam_answers: {
+        Args: { p_attempt_id: string; p_answers: unknown };
+        Returns: unknown;
+      };
+      submit_public_exam_attempt: {
+        Args: { p_attempt_id: string; p_answers?: unknown };
+        Returns: unknown;
+      };
+      list_public_exam_attempts: {
+        Args: {
+          p_status?: string | null;
+          p_search?: string | null;
+          p_limit?: number | null;
+        };
+        Returns: unknown;
+      };
+      get_public_exam_attempt_detail: {
+        Args: { p_attempt_id: string };
+        Returns: unknown;
+      };
+      set_public_exam_answer_marks: {
+        Args: {
+          p_attempt_id: string;
+          p_question_id: string;
+          p_marks: number;
+          p_reason?: string | null;
+        };
+        Returns: unknown;
+      };
     };
   };
 }

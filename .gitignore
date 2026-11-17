@@ -20,3 +20,7 @@ dev-out.txt
 full-run-repeat.txt
 
 dump.sql
+
+# Exam answers/bank — must never be committed (public repo)
+bank_dirasat_sades.md
+supabase/migrations/0093_public_social_studies_exam.sql

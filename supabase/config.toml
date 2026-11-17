@@ -53,6 +53,9 @@ verify_jwt = true
 [functions.suggestion-image-delete]
 verify_jwt = true
 
+[functions.grade-public-exam]
+verify_jwt = false
+
 [storage.buckets.boards]
 public = false
 file_size_limit = "10MiB"

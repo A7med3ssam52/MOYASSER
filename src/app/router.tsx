@@ -22,6 +22,12 @@ const PrivacyPage = lazyWithRetry(() => import('../features/public/PrivacyPage')
 const TermsPage = lazyWithRetry(() => import('../features/public/TermsPage').then((m) => ({ default: m.TermsPage })));
 const NotFoundPage = lazyWithRetry(() => import('../features/public/NotFoundPage').then((m) => ({ default: m.NotFoundPage })));
 const LabsExamPage = lazyWithRetry(() => import('../features/labs/LabsExamPage').then((m) => ({ default: m.LabsExamPage })));
+const PublicExamPage = lazyWithRetry(() =>
+  import('../features/publicExam/PublicExamPage').then((m) => ({ default: m.PublicExamPage })),
+);
+const PublicResultsPage = lazyWithRetry(() =>
+  import('../features/publicExam/PublicResultsPage').then((m) => ({ default: m.PublicResultsPage })),
+);
 const LabsRedesignPage = lazyWithRetry(() => import('../features/labs/LabsRedesignPage').then((m) => ({ default: m.LabsRedesignPage })));
 const NewUiPage = lazyWithRetry(() => import('../features/labs/NewUiPage').then((m) => ({ default: m.NewUiPage })));
 const CurriLabsPage = lazyWithRetry(() => import('../features/labs/CurriLabsPage').then((m) => ({ default: m.CurriLabsPage })));
@@ -131,6 +137,15 @@ export function AppRoutes() {
         <Route path="/contact" element={<ContactPage />} />
         <Route path="/privacy" element={<PrivacyPage />} />
         <Route path="/terms" element={<TermsPage />} />
+        {/* Public: درجة-6 exam — عام بدون تسجيل دخول (لايف 17 نوفمبر 2026) */}
+        <Route path="/exam" element={<PublicExamPage />} />
+        {/* Staff-only: نتائج الامتحان العام */}
+        <Route element={<ProtectedRoute />}>
+          <Route path="/results" element={<RoleGuard allow={['mr_moyasser', 'admin', 'teacher']} />}>
+            <Route index element={<PublicResultsPage />} />
+          </Route>
+        </Route>
+
         {/* Labs: interactive demo (noindex, no backend, no persistence) */}
         <Route path="/labs/exam" element={<LabsExamPage />} />
         <Route path="/labs/redesign" element={<LabsRedesignPage />} />
