@@ -236,50 +236,39 @@ export function PublicExamLivePage() {
     });
     setPhase('result');
 
-    // تصحيح المقالات بالذكاء الاصطناعي في الخلفية — محدش مستنية
+    // تصحيح المقالات بالذكاء الاصطناعي في الخلفية، وتتبع النتيجة بانتظار الحلقات
     void gradePublicExamAttempt(currentExam.attemptId).catch(() => {
       /* الـ attempt بتظهر كـ grading_failed ويصححها الأستاذ من /results */
     });
+
+    // انتظر الـ grading وظهر النتيجة على الشاشة — نفس الـ task بتاع التسليم عشان
+    // النتيجة تظهر بدون reload حتى لو الـ window كان في الخلفية
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      try {
+        const state = await getPublicExamAttempt(currentExam.attemptId);
+        if (state.phase === 'done') {
+          setResult((previous) =>
+            previous
+              ? {
+                  ...previous,
+                  status: state.status,
+                  objectiveScore: state.objective_score,
+                  essayScore: state.essay_score,
+                  finalScore: state.final_score,
+                  maxScore: state.max_score,
+                }
+              : previous,
+          );
+          return;
+        }
+      } catch {
+        /* استمر في المحاولة — الـ grade عند الداتا بيز مش في المتصفح */
+      }
+    }
+    // مر دقيقتان ونصف بدون نتيجة — الـ grade هيتشاف عند الـ reload / من /results
   }, []);
 
-  // تتبع نتيجة التصحيح في الخلفية (مع setInterval عشان التحديث يظهر لحظيًا)
-  useEffect(() => {
-    if (phase !== 'result' || !result || result.status !== 'submitted') return undefined;
-    const attemptId = examRef.current?.attemptId;
-    if (!attemptId) return undefined;
-    let cancelled = false;
-    let tries = 0;
-    const poll = window.setInterval(() => {
-      tries += 1;
-      void getPublicExamAttempt(attemptId)
-        .then((state) => {
-          if (cancelled) return;
-          if (state.phase === 'done') {
-            setResult((previous) =>
-              previous
-                ? {
-                    ...previous,
-                    status: state.status,
-                    objectiveScore: state.objective_score,
-                    essayScore: state.essay_score,
-                    finalScore: state.final_score,
-                    maxScore: state.max_score,
-                  }
-                : previous,
-            );
-            window.clearInterval(poll);
-          }
-        })
-        .catch(() => {
-          /* استمر في المحاولة — الـ grade عند الداتا بيز مش في المتصفح */
-        });
-      if (tries >= 60) window.clearInterval(poll);
-    }, 2000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(poll);
-    };
-  }, [phase, result]);
 
   const handleSubmitClick = useCallback(() => {
     setSubmitConfirmOpen(true);
